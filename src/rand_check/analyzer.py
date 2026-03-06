@@ -1,0 +1,272 @@
+"""Post-session analyzer — rich analysis of a completed session.
+
+Uses the full feature vector to produce a comprehensive report,
+including pattern fingerprinting (which cognitive bias dominates).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from rand_check.features import FeatureVector, compute_features
+from rand_check.prediction import PredictionEngine
+from rand_check.models import DecisionPackage, Position
+
+
+@dataclass(frozen=True)
+class PatternFingerprint:
+    """Identifies which cognitive bias dominates the player's behaviour."""
+    primary_bias: str
+    confidence: float        # 0-1
+    bias_scores: dict[str, float]
+    description: str
+
+
+@dataclass
+class SessionReport:
+    """Complete post-session analysis report."""
+    features: FeatureVector
+    fingerprint: PatternFingerprint
+    final_prediction: DecisionPackage
+    timeline: list[float]       # π_n at each hand
+    prediction_timeline: list[float]  # q_n at each hand
+    gto_prob: float
+    n_hands: int
+    changepoints: list[int]
+
+    def summary(self) -> str:
+        """Generate a formatted summary string."""
+        lines = []
+        lines.append("╔══════════════════════════════════════════════════════════╗")
+        lines.append("║         POST-SESSION ANALYSIS REPORT                    ║")
+        lines.append("╚══════════════════════════════════════════════════════════╝")
+        lines.append("")
+        lines.append(f"  Hands analyzed: {self.n_hands}")
+        lines.append(f"  GTO baseline P: {self.gto_prob:.3f}")
+        lines.append(f"  Final detection confidence (π_n): {self.final_prediction.detection_confidence:.3f}")
+        lines.append(f"  Final predicted 3bet prob (q_n):  {self.final_prediction.predicted_3bet_prob:.3f}")
+        lines.append(f"  Edge over GTO: {self.final_prediction.edge:+.3f}")
+        lines.append("")
+
+        if self.changepoints:
+            lines.append(f"  Changepoints detected at hands: {self.changepoints}")
+        else:
+            lines.append("  No changepoints detected")
+
+        lines.append("")
+        lines.append(self.features.detection_summary(self.gto_prob))
+        lines.append("")
+        lines.append("  Pattern Fingerprint:")
+        lines.append(f"    Primary bias: {self.fingerprint.primary_bias}")
+        lines.append(f"    Confidence:   {self.fingerprint.confidence:.2f}")
+        lines.append(f"    {self.fingerprint.description}")
+        lines.append("")
+
+        if self.fingerprint.bias_scores:
+            lines.append("    Bias breakdown:")
+            for bias, score in sorted(self.fingerprint.bias_scores.items(),
+                                       key=lambda x: -x[1]):
+                bar = "█" * int(score * 20)
+                lines.append(f"      {bias:20s}: {score:.2f} {bar}")
+
+        lines.append("")
+        lines.append(f"  Exploitation: {self.final_prediction.exploitation_suggestion}")
+
+        return "\n".join(lines)
+
+
+class PostSessionAnalyzer:
+    """Analyze a completed session sequence."""
+
+    def analyze(
+        self,
+        sequence: list[int],
+        gto_prob: float = 0.25,
+        position: Position = Position.BTN,
+    ) -> SessionReport:
+        """Run full post-session analysis.
+
+        Parameters
+        ----------
+        sequence : list[int]
+            Complete binary session history.
+        gto_prob : float
+            GTO baseline 3bet probability.
+        position : Position
+            Player's position (for solver lookup fallback).
+
+        Returns
+        -------
+        SessionReport
+        """
+        n = len(sequence)
+
+        # Compute features from the raw sequence
+        features = compute_features(sequence, gto_prob)
+
+        # Run the prediction engine over the full sequence to get timelines
+        engine = PredictionEngine(default_gto_prob=gto_prob)
+        detection_timeline: list[float] = []
+        prediction_timeline: list[float] = []
+
+        pkg = None
+        for action in sequence:
+            pkg = engine.process_action(action, position)
+            detection_timeline.append(pkg.detection_confidence)
+            prediction_timeline.append(pkg.predicted_3bet_prob)
+
+        if pkg is None:
+            from rand_check.models import DecisionPackage
+            pkg = DecisionPackage()
+
+        changepoints = engine._bocpd.changepoints_detected
+
+        # Compute pattern fingerprint
+        fingerprint = self._compute_fingerprint(features, sequence, gto_prob)
+
+        return SessionReport(
+            features=features,
+            fingerprint=fingerprint,
+            final_prediction=pkg,
+            timeline=detection_timeline,
+            prediction_timeline=prediction_timeline,
+            gto_prob=gto_prob,
+            n_hands=n,
+            changepoints=changepoints,
+        )
+
+    def _compute_fingerprint(
+        self, features: FeatureVector, sequence: list[int], gto_prob: float
+    ) -> PatternFingerprint:
+        """Identify the dominant cognitive bias from the feature vector."""
+        scores: dict[str, float] = {}
+
+        # Alternation bias: high alternation deviation + negative serial correlation
+        alt_signal = max(0.0, features.alternation_deviation / 0.20)
+        neg_corr_signal = max(0.0, -features.serial_correlation / 0.30)
+        scores["alternation_bias"] = min(1.0, (alt_signal + neg_corr_signal) / 2.0)
+
+        # Gambler's fallacy: look for increasing 3bet prob after long fold streaks
+        gf_signal = self._gambler_fallacy_score(sequence, gto_prob)
+        scores["gamblers_fallacy"] = gf_signal
+
+        # Run aversion: very short max runs compared to expected
+        runs = self._get_runs(sequence)
+        if runs:
+            max_run = max(r[1] for r in runs)
+            # Expected max run for Bernoulli(p) of length n
+            q = max(gto_prob, 1.0 - gto_prob)
+            n = len(sequence)
+            if q > 0 and n > 1:
+                expected_max = max(1.0, np.log(n) / (-np.log(q)))
+                if max_run < expected_max * 0.5:
+                    scores["run_aversion"] = min(1.0, (expected_max - max_run) / expected_max)
+                else:
+                    scores["run_aversion"] = 0.0
+            else:
+                scores["run_aversion"] = 0.0
+        else:
+            scores["run_aversion"] = 0.0
+
+        # Frequency tracking / counter: low frequency drift = over-correcting
+        # High LZC (overly uniform) is also a signal
+        fd_signal = max(0.0, 1.0 - features.frequency_drift / 0.01) if features.frequency_drift > 0 else 0.5
+        scores["frequency_tracking"] = min(1.0, fd_signal * 0.5)
+
+        # Pattern compressibility: low LZC
+        if features.normalized_lz_complexity < 0.90:
+            scores["compressible_pattern"] = min(1.0, (0.90 - features.normalized_lz_complexity) / 0.30)
+        else:
+            scores["compressible_pattern"] = 0.0
+
+        # Determine primary bias
+        if not scores or max(scores.values()) < 0.1:
+            return PatternFingerprint(
+                primary_bias="none_detected",
+                confidence=0.0,
+                bias_scores=scores,
+                description="No significant cognitive bias detected — may be using RNG",
+            )
+
+        primary = max(scores, key=scores.get)  # type: ignore
+        confidence = scores[primary]
+
+        descriptions = {
+            "alternation_bias": "Player over-alternates between 3betting and folding — classic human randomization failure",
+            "gamblers_fallacy": "Player becomes 'due' for a 3bet after long fold streaks — gambler's fallacy pattern",
+            "run_aversion": "Player avoids consecutive same-actions — never 3bets multiple times in a row",
+            "frequency_tracking": "Player mentally tracks their 3bet frequency and self-corrects toward a target",
+            "compressible_pattern": "Player's sequence is highly structured / compressible — strong repeating pattern",
+        }
+
+        return PatternFingerprint(
+            primary_bias=primary,
+            confidence=confidence,
+            bias_scores=scores,
+            description=descriptions.get(primary, ""),
+        )
+
+    @staticmethod
+    def _gambler_fallacy_score(sequence: list[int], gto_prob: float) -> float:
+        """Score indicating gambler's fallacy behaviour.
+
+        Check if P(3bet | k consecutive folds) increases with k.
+        """
+        if len(sequence) < 10:
+            return 0.0
+
+        # Group by streak length before each 3bet
+        streak_probs: dict[int, list[int]] = {}
+        fold_streak = 0
+        for action in sequence:
+            if action == 1:
+                bucket = min(fold_streak, 5)
+                if bucket not in streak_probs:
+                    streak_probs[bucket] = []
+                streak_probs[bucket].append(1)
+                fold_streak = 0
+            else:
+                bucket = min(fold_streak, 5)
+                if bucket not in streak_probs:
+                    streak_probs[bucket] = []
+                streak_probs[bucket].append(0)
+                fold_streak += 1
+
+        # Check if 3bet rate increases with streak length
+        if len(streak_probs) < 2:
+            return 0.0
+
+        rates = []
+        for k in sorted(streak_probs.keys()):
+            obs = streak_probs[k]
+            if len(obs) >= 3:
+                rates.append((k, sum(obs) / len(obs)))
+
+        if len(rates) < 2:
+            return 0.0
+
+        # Simple check: is the rate at high streak > rate at low streak?
+        low_rate = rates[0][1]
+        high_rate = rates[-1][1]
+        if high_rate > low_rate + 0.05:
+            return min(1.0, (high_rate - low_rate) / 0.30)
+        return 0.0
+
+    @staticmethod
+    def _get_runs(seq: list[int]) -> list[tuple[int, int]]:
+        if not seq:
+            return []
+        runs: list[tuple[int, int]] = []
+        current_val = seq[0]
+        current_len = 1
+        for i in range(1, len(seq)):
+            if seq[i] == current_val:
+                current_len += 1
+            else:
+                runs.append((current_val, current_len))
+                current_val = seq[i]
+                current_len = 1
+        runs.append((current_val, current_len))
+        return runs
