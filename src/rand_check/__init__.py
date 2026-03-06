@@ -29,6 +29,7 @@ from rand_check.models import (
     DecisionPackage,
 )
 from rand_check.prediction import PredictionEngine
+from rand_check.solver_lookup import GameFormat
 
 __all__ = [
     "Action",
@@ -36,4 +37,5 @@ __all__ = [
     "Position",
     "DecisionPackage",
     "PredictionEngine",
+    "GameFormat",
 ]

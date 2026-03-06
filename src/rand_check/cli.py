@@ -24,33 +24,46 @@ def main(argv: list[str] | None = None) -> None:
     # ── demo ─────────────────────────────────────────────────────────
     demo_p = sub.add_parser("demo", help="Run a live demo with synthetic data")
     demo_p.add_argument("-n", type=int, default=80, help="Sequence length")
-    demo_p.add_argument("-p", type=float, default=0.25, help="GTO 3bet prob")
+    demo_p.add_argument("-p", type=float, default=None,
+                        help="GTO 3bet prob (default: 0.16 for HU, 0.25 for 6-max)")
     demo_p.add_argument("--model", default="markov_alternation",
                         choices=["iid", "markov_alternation", "gamblers_fallacy",
                                  "counter", "run_averse", "mixture", "changepoint"],
                         help="Synthetic model to demo")
+    demo_p.add_argument("--hu", action="store_true", help="Heads-up mode")
 
     # ── validate ─────────────────────────────────────────────────────
     val_p = sub.add_parser("validate", help="Run calibration/validation suite")
     val_p.add_argument("--n-per-model", type=int, default=50, help="Sequences per model")
     val_p.add_argument("--seq-length", type=int, default=80, help="Sequence length")
-    val_p.add_argument("-p", type=float, default=0.25, help="GTO 3bet prob")
+    val_p.add_argument("-p", type=float, default=None,
+                       help="GTO 3bet prob (default: auto by format)")
     val_p.add_argument("--seed", type=int, default=42, help="RNG seed")
+    val_p.add_argument("--hu", action="store_true", help="Heads-up mode")
 
     # ── analyze ──────────────────────────────────────────────────────
     ana_p = sub.add_parser("analyze", help="Analyze a binary string")
     ana_p.add_argument("sequence", type=str, help="Binary string, e.g. '010110010'")
-    ana_p.add_argument("-p", type=float, default=0.25, help="GTO 3bet prob")
+    ana_p.add_argument("-p", type=float, default=None,
+                       help="GTO 3bet prob (default: auto by format)")
+    ana_p.add_argument("--hu", action="store_true", help="Heads-up mode")
 
     # ── simulate ─────────────────────────────────────────────────────
     sim_p = sub.add_parser("simulate", help="Generate a synthetic sequence")
     sim_p.add_argument("model", choices=["iid", "markov_alternation", "gamblers_fallacy",
                                          "counter", "run_averse", "mixture", "changepoint"])
     sim_p.add_argument("n", type=int, help="Sequence length")
-    sim_p.add_argument("-p", type=float, default=0.25, help="GTO 3bet prob")
+    sim_p.add_argument("-p", type=float, default=None,
+                       help="GTO 3bet prob (default: auto by format)")
     sim_p.add_argument("--seed", type=int, default=None, help="RNG seed")
+    sim_p.add_argument("--hu", action="store_true", help="Heads-up mode")
 
     args = parser.parse_args(argv)
+
+    # Resolve GTO prob from --hu flag if not explicitly given
+    hu = getattr(args, "hu", False)
+    if getattr(args, "p", None) is None:
+        args.p = 0.23 if hu else 0.25
 
     if args.command == "demo":
         _run_demo(args)
@@ -84,13 +97,17 @@ def _run_demo(args: argparse.Namespace) -> None:
     gen_seq = generators[args.model]()
     seq = gen_seq.sequence
 
+    fmt_label = "HU" if args.hu else "6-max"
     print(f"\n{'='*60}")
-    print(f"  LIVE DEMO: {gen_seq.model_name} (n={args.n}, P={args.p})")
+    print(f"  LIVE DEMO: {gen_seq.model_name} ({fmt_label}, n={args.n}, P={args.p})")
     print(f"  Ground truth: {'HUMAN' if gen_seq.is_human else 'IID'}")
     print(f"  Parameters: {gen_seq.parameters}")
     print(f"{'='*60}\n")
 
-    engine = PredictionEngine(default_gto_prob=args.p)
+    if args.hu:
+        engine = PredictionEngine.for_heads_up()
+    else:
+        engine = PredictionEngine(default_gto_prob=args.p)
 
     print(f"{'Hand':>5} │ {'Act':>3} │ {'π_n':>6} │ {'q_n':>6} │ {'P':>5} │ {'Edge':>6} │ {'CI':>13} │ Interpretation")
     print("─" * 90)

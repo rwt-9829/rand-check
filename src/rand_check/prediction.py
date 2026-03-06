@@ -25,7 +25,7 @@ from rand_check.models import (
     HandResult,
     Position,
 )
-from rand_check.solver_lookup import get_default_3bet_prob, get_gto_3bet_prob
+from rand_check.solver_lookup import GameFormat, get_default_3bet_prob, get_gto_3bet_prob
 from typing import Optional, List
 
 
@@ -60,6 +60,7 @@ class PredictionEngine:
     ctw_activation: int = 60
     ctw_blend_weight: float = 0.35
     exploitation_threshold: float = 0.03
+    game_format: GameFormat = GameFormat.SIXMAX
 
     # ── Sub-engines (initialized in __post_init__) ───────────────────
     _detector: DetectionEngine = field(init=False, repr=False)
@@ -91,10 +92,13 @@ class PredictionEngine:
         # Update GTO baseline for this spot
         if hand.villain_position is not None:
             self._current_gto_prob = get_gto_3bet_prob(
-                hand.position, hand.villain_position, hand.stack_bb
+                hand.position, hand.villain_position, hand.stack_bb,
+                game_format=self.game_format,
             )
         else:
-            self._current_gto_prob = get_default_3bet_prob(hand.position)
+            self._current_gto_prob = get_default_3bet_prob(
+                hand.position, game_format=self.game_format,
+            )
 
         # Update all sub-engines
         pi_n = self._detector.update(action_int)
@@ -113,7 +117,7 @@ class PredictionEngine:
 
         return self._build_package()
 
-    def process_action(self, action: int, position: Position = Position.BTN,
+    def process_action(self, action: int, position: Position = Position.BB,
                        villain_position: Optional[Position] = None,
                        stack_bb: float = 100.0) -> DecisionPackage:
         """Convenience method — process a raw action without a HandResult."""
@@ -127,7 +131,7 @@ class PredictionEngine:
         return self.process_hand(hand)
 
     def process_sequence(self, sequence: List[int],
-                         position: Position = Position.BTN) -> DecisionPackage:
+                         position: Position = Position.BB) -> DecisionPackage:
         """Process an entire sequence and return the final package.
 
         Useful for batch analysis of historical data.
@@ -243,3 +247,38 @@ class PredictionEngine:
             else:
                 suggestions.append("Slight widening of defend range")
             return " | ".join(suggestions)
+
+    # ── Factory helpers ──────────────────────────────────────────────
+
+    @classmethod
+    def for_heads_up(cls, stack_bb: float = 100.0, **kwargs) -> PredictionEngine:
+        """Factory for Heads-Up play.
+
+        Sets the GTO baseline to ~23 % (BB 3-bet vs BTN open at 100 bb)
+        and selects the HU solver table.
+
+        Parameters
+        ----------
+        stack_bb : float
+            Effective stack depth (adjusts GTO freq via HU multipliers).
+        **kwargs
+            Any other PredictionEngine parameters to override.
+
+        Returns
+        -------
+        PredictionEngine
+            Engine pre-configured for HU play.
+        """
+        from rand_check.solver_lookup import get_gto_3bet_prob as _lookup
+        hu_gto = _lookup(
+            Position.BB, Position.BTN, stack_bb,
+            game_format=GameFormat.HEADS_UP,
+        )
+        defaults = dict(
+            default_gto_prob=hu_gto,
+            game_format=GameFormat.HEADS_UP,
+            # HU sessions are shorter — activate CTW a bit earlier
+            ctw_activation=45,
+        )
+        defaults.update(kwargs)
+        return cls(**defaults)
