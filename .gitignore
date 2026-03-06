@@ -1,0 +1,46 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+sdist/
+wheels/
+
+# Editable install metadata
+*.editable-*
+src/*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# pytest
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# mypy
+.mypy_cache/
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
