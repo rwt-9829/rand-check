@@ -37,14 +37,14 @@ Works for both **6-max** and **heads-up** formats.
 
 **Requirements:** Python 3.9 or newer.
 
-### Step 1 — Clone the repository
+### Step 1 â€” Clone the repository
 
 ```bash
 git clone https://github.com/your-username/rand-check.git
 cd rand-check
 ```
 
-### Step 2 — Create a virtual environment and install
+### Step 2 â€” Create a virtual environment and install
 
 <details>
 <summary><strong>Windows (PowerShell)</strong></summary>
@@ -119,7 +119,7 @@ rand-check analyze BFFBFBFFBFBFBFFBFBFFBFBFBFFBFB
 
 rand-check has four commands: **demo**, **analyze**, **simulate**, and **validate**.
 
-### `rand-check demo` — See a live example
+### `rand-check demo` â€” See a live example
 
 Runs a walkthrough using a simulated opponent so you can see detection working hand by hand. Great for understanding what the tool does.
 
@@ -152,7 +152,7 @@ rand-check demo [OPTIONS]
 **Examples:**
 
 ```bash
-# Default demo — alternation-biased opponent, 80 hands
+# Default demo â€” alternation-biased opponent, 80 hands
 rand-check demo
 
 # Heads-up demo with a gambler's fallacy opponent over 120 hands
@@ -164,7 +164,7 @@ rand-check demo --detailed
 
 ---
 
-### `rand-check analyze` — Analyze a real session
+### `rand-check analyze` â€” Analyze a real session
 
 Feed in your opponent's 3-bet decisions and get a full bias report.
 
@@ -172,7 +172,7 @@ Feed in your opponent's 3-bet decisions and get a full bias report.
 rand-check analyze SEQUENCE [OPTIONS]
 ```
 
-**Input formats** — use whichever is easiest:
+**Input formats** â€” use whichever is easiest:
 
 | Format | Example |
 |--------|---------|
@@ -206,11 +206,11 @@ The report tells you:
 - Whether the opponent appears to be **randomizing** or **following a pattern**
 - What kind of bias was detected (alternation, gambler's fallacy, etc.)
 - How their 3-bet rate compares to balanced play
-- **What to do about it** — plain-English suggestions
+- **What to do about it** â€” plain-English suggestions
 
 ---
 
-### `rand-check simulate` — Generate fake sequences
+### `rand-check simulate` â€” Generate fake sequences
 
 Outputs a binary string from a simulated opponent. Useful for testing or piping into `analyze`.
 
@@ -241,7 +241,7 @@ rand-check analyze $(rand-check simulate counter 150)
 
 ---
 
-### `rand-check validate` — Test the engine's accuracy
+### `rand-check validate` â€” Test the engine's accuracy
 
 Generates many sequences from every opponent type and measures detection performance.
 
@@ -331,9 +331,9 @@ After each hand, you see:
 
 The report at the end tells you:
 
-- **Verdict** — Is this opponent randomizing or patterned?
-- **Detected bias** — What kind of pattern (alternation, gambler's fallacy, etc.)
-- **What to do** — Exploitation suggestion in plain English
+- **Verdict** â€” Is this opponent randomizing or patterned?
+- **Detected bias** â€” What kind of pattern (alternation, gambler's fallacy, etc.)
+- **What to do** â€” Exploitation suggestion in plain English
 
 ### The detailed view (`--detailed`)
 
@@ -362,21 +362,21 @@ pytest --cov=rand_check --cov-report=term-missing
 
 rand-check combines three Bayesian layers that run simultaneously on every hand:
 
-### Layer 1 — Pattern Detection (always active)
+### Layer 1 â€” Pattern Detection (always active)
 
 A statistical model that learns whether the opponent's next action depends on their previous action (e.g. "after a 3-bet, they tend to fold next"). Converges to accurate predictions in ~20 hands.
 
-### Layer 2 — Complex Patterns (activates after 60 hands)
+### Layer 2 â€” Complex Patterns (activates after 60 hands)
 
 Catches more complex patterns like "they only 3-bet after two consecutive folds." Needs more data to be reliable, so it kicks in after 60 observations.
 
-### Layer 3 — Strategy Shift Detection (always active)
+### Layer 3 â€” Strategy Shift Detection (always active)
 
-Watches for sudden strategy changes — e.g. the opponent goes on tilt or starts playing differently. When a shift is detected, the engine resets its beliefs and adapts quickly.
+Watches for sudden strategy changes â€” e.g. the opponent goes on tilt or starts playing differently. When a shift is detected, the engine resets its beliefs and adapts quickly.
 
 ### Technical details
 
-- O(1) per hand for the core layer — fast enough for real-time play
+- O(1) per hand for the core layer â€” fast enough for real-time play
 - Informative priors converge in ~20 hands
 - Built on: Bayesian Markov models, Context Tree Weighting (Willems et al. 1995), and Bayesian Online Changepoint Detection (Adams & MacKay 2007)
 
@@ -412,4 +412,4 @@ Watches for sudden strategy changes — e.g. the opponent goes on tilt or starts p
 
 ## License
 
-MIT
+MIT
