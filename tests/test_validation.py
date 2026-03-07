@@ -47,4 +47,4 @@ class TestValidation:
         metrics = runner.run(n_per_model=5, seq_length=30, gto_prob=0.25, seed=42)
         summary = metrics.summary()
         assert "Brier score" in summary
-        assert "Detection Power" in summary
+        assert "DETECTION POWER" in summary

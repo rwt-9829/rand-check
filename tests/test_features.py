@@ -94,5 +94,12 @@ class TestFeatures:
         seq = [0, 1] * 20
         fv = compute_features(seq, gto_prob=0.25)
         summary = fv.detection_summary(0.25)
+        assert "Alternation" in summary
+        assert "Pattern signal" in summary
+
+    def test_detection_summary_detailed(self):
+        seq = [0, 1] * 20
+        fv = compute_features(seq, gto_prob=0.25)
+        summary = fv.detection_summary(0.25, detailed=True)
         assert "LLR" in summary
-        assert "ΔA" in summary
+        assert "dA" in summary

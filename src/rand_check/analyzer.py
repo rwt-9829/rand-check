@@ -36,17 +36,115 @@ class SessionReport:
     n_hands: int
     changepoints: list[int]
 
-    def summary(self) -> str:
-        """Generate a formatted summary string."""
+    def summary(self, detailed: bool = False) -> str:
+        """Generate a formatted summary string.
+
+        Parameters
+        ----------
+        detailed : bool
+            If True, include full technical metrics. If False (default),
+            show a simplified, plain-English report.
+        """
+        if detailed:
+            return self._detailed_summary()
+        return self._friendly_summary()
+
+    def _friendly_summary(self) -> str:
+        """Plain-English summary for non-technical users."""
         lines = []
-        lines.append("╔══════════════════════════════════════════════════════════╗")
-        lines.append("║         POST-SESSION ANALYSIS REPORT                    ║")
-        lines.append("╚══════════════════════════════════════════════════════════╝")
+        pi = self.final_prediction.detection_confidence
+        pred = self.final_prediction.predicted_3bet_prob
+        edge = self.final_prediction.edge
+
+        # Verdict
+        if pi < 0.3:
+            verdict = "VERDICT: Opponent appears to be randomizing properly."
+            verdict_detail = "No exploitable pattern detected. Play your normal game."
+        elif pi < 0.6:
+            verdict = "VERDICT: Possible patterns, but not enough data to be sure."
+            verdict_detail = "Keep watching -- a few more hands should clarify things."
+        elif pi < 0.85:
+            verdict = "VERDICT: Opponent is likely following a pattern."
+            verdict_detail = "The engine has found exploitable tendencies."
+        else:
+            verdict = "VERDICT: Strong pattern detected!"
+            verdict_detail = "This opponent is definitely not randomizing."
+
+        lines.append("  " + "=" * 58)
+        lines.append("  SESSION REPORT")
+        lines.append("  " + "=" * 58)
+        lines.append("")
+        lines.append(f"  {verdict}")
+        lines.append(f"  {verdict_detail}")
+        lines.append("")
+        lines.append(f"  Hands analyzed:     {self.n_hands}")
+        lines.append(f"  Pattern confidence: {pi * 100:.1f}%")
+
+        # Prediction
+        lines.append("")
+        lines.append(f"  Predicted next 3-bet chance: {pred * 100:.1f}%")
+        lines.append(f"  Balanced (GTO) 3-bet rate:   {self.gto_prob * 100:.1f}%")
+        if abs(edge) > 0.03:
+            direction = "more" if edge > 0 else "less"
+            lines.append(f"  --> Opponent 3-bets {direction} than balanced by {abs(edge) * 100:.1f}%")
+
+        # Strategy shifts
+        if self.changepoints:
+            lines.append("")
+            shifts = ", ".join(str(h) for h in self.changepoints)
+            lines.append(f"  Strategy shifts detected at hand(s): {shifts}")
+            lines.append("  (The opponent changed their approach mid-session)")
+
+        # Pattern fingerprint
+        lines.append("")
+        lines.append("  DETECTED BIAS")
+        lines.append("  " + "-" * 40)
+
+        fp = self.fingerprint
+        bias_labels = {
+            "alternation_bias": "Alternation bias",
+            "gamblers_fallacy": "Gambler's fallacy",
+            "run_aversion": "Streak aversion",
+            "frequency_tracking": "Frequency tracking",
+            "compressible_pattern": "Repeating pattern",
+            "none_detected": "None detected",
+        }
+
+        if fp.primary_bias == "none_detected":
+            lines.append("  No significant bias found.")
+        else:
+            label = bias_labels.get(fp.primary_bias, fp.primary_bias)
+            lines.append(f"  Primary bias: {label} ({fp.confidence * 100:.0f}% match)")
+            lines.append(f"  {fp.description}")
+
+        if fp.bias_scores:
+            lines.append("")
+            lines.append("  All biases checked:")
+            for bias, score in sorted(fp.bias_scores.items(), key=lambda x: -x[1]):
+                label = bias_labels.get(bias, bias)
+                bar_len = int(score * 20)
+                bar = "#" * bar_len + "." * (20 - bar_len)
+                lines.append(f"    {label:22s} {bar} {score * 100:.0f}%")
+
+        # Suggestion
+        lines.append("")
+        sugg = self.final_prediction.exploitation_suggestion
+        if sugg:
+            lines.append(f"  WHAT TO DO: {sugg}")
+
+        return "\n".join(lines)
+
+    def _detailed_summary(self) -> str:
+        """Full technical summary for advanced users."""
+        lines = []
+        lines.append("  " + "=" * 58)
+        lines.append("  POST-SESSION ANALYSIS (DETAILED)")
+        lines.append("  " + "=" * 58)
         lines.append("")
         lines.append(f"  Hands analyzed: {self.n_hands}")
         lines.append(f"  GTO baseline P: {self.gto_prob:.3f}")
-        lines.append(f"  Final detection confidence (π_n): {self.final_prediction.detection_confidence:.3f}")
-        lines.append(f"  Final predicted 3bet prob (q_n):  {self.final_prediction.predicted_3bet_prob:.3f}")
+        lines.append(f"  Detection confidence (pi_n): {self.final_prediction.detection_confidence:.3f}")
+        lines.append(f"  Predicted 3bet prob (q_n):   {self.final_prediction.predicted_3bet_prob:.3f}")
         lines.append(f"  Edge over GTO: {self.final_prediction.edge:+.3f}")
         lines.append("")
 
@@ -56,7 +154,7 @@ class SessionReport:
             lines.append("  No changepoints detected")
 
         lines.append("")
-        lines.append(self.features.detection_summary(self.gto_prob))
+        lines.append(self.features.detection_summary(self.gto_prob, detailed=True))
         lines.append("")
         lines.append("  Pattern Fingerprint:")
         lines.append(f"    Primary bias: {self.fingerprint.primary_bias}")
@@ -68,7 +166,8 @@ class SessionReport:
             lines.append("    Bias breakdown:")
             for bias, score in sorted(self.fingerprint.bias_scores.items(),
                                        key=lambda x: -x[1]):
-                bar = "█" * int(score * 20)
+                bar_len = int(score * 20)
+                bar = "#" * bar_len
                 lines.append(f"      {bias:20s}: {score:.2f} {bar}")
 
         lines.append("")

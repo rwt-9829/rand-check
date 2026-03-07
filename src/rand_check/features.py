@@ -42,50 +42,135 @@ class FeatureVector:
             "serial_correlation": self.serial_correlation,
         }
 
-    def detection_summary(self, gto_prob: float) -> str:
-        """Human-readable summary of which biases are detected."""
-        lines = [f"Session Feature Analysis (n={self.n_observations}, P={gto_prob:.3f})"]
-        lines.append("=" * 60)
+    def detection_summary(self, gto_prob: float, detailed: bool = False) -> str:
+        """Human-readable summary of which biases are detected.
 
-        # LLR
-        if self.log_likelihood_ratio > 1.0:
-            lines.append(f"  LLR = {self.log_likelihood_ratio:+.2f}  ← Strong Markov signal")
-        elif self.log_likelihood_ratio > 0.0:
-            lines.append(f"  LLR = {self.log_likelihood_ratio:+.2f}  ← Mild Markov signal")
-        else:
-            lines.append(f"  LLR = {self.log_likelihood_ratio:+.2f}  ← Consistent with IID")
+        Parameters
+        ----------
+        gto_prob : float
+            The GTO baseline probability.
+        detailed : bool
+            If True, show technical metric names. If False, use plain English.
+        """
+        if detailed:
+            return self._technical_summary(gto_prob)
+        return self._friendly_summary(gto_prob)
+
+    def _friendly_summary(self, gto_prob: float) -> str:
+        """Plain-English feature summary."""
+        lines = []
+        lines.append(f"  PATTERN ANALYSIS ({self.n_observations} hands, baseline: {gto_prob * 100:.1f}%)")
+        lines.append("  " + "-" * 50)
+
+        findings = []
 
         # Alternation
         if self.alternation_deviation > 0.05:
-            lines.append(f"  ΔA  = {self.alternation_deviation:+.3f}  ← Over-alternation (human bias)")
+            findings.append(
+                f"  Alternation:    Too much switching back and forth "
+                f"(+{self.alternation_deviation:.1%} above expected)"
+            )
         elif self.alternation_deviation < -0.05:
-            lines.append(f"  ΔA  = {self.alternation_deviation:+.3f}  ← Under-alternation (streaky)")
+            findings.append(
+                f"  Alternation:    Too streaky -- tends to repeat the same action "
+                f"({self.alternation_deviation:.1%} below expected)"
+            )
         else:
-            lines.append(f"  ΔA  = {self.alternation_deviation:+.3f}  ← Normal range")
-
-        # Run length
-        lines.append(f"  RLS = {self.run_length_score:.2f}")
-        if self.run_length_score > 5.0:
-            lines[-1] += "  ← Runs shorter than expected (human)"
-
-        # LZ complexity
-        if self.normalized_lz_complexity < 0.85:
-            lines.append(f"  LZC = {self.normalized_lz_complexity:.3f}  ← Compressible (patterned)")
-        elif self.normalized_lz_complexity > 1.05:
-            lines.append(f"  LZC = {self.normalized_lz_complexity:.3f}  ← Over-complex")
-        else:
-            lines.append(f"  LZC = {self.normalized_lz_complexity:.3f}  ← Normal complexity")
-
-        # Frequency drift
-        lines.append(f"  FD  = {self.frequency_drift:.4f}")
+            findings.append(f"  Alternation:    Normal")
 
         # Serial correlation
         if self.serial_correlation < -0.1:
-            lines.append(f"  ρ₁  = {self.serial_correlation:+.3f}  ← Negative autocorrelation (alternation)")
+            findings.append(
+                f"  Action link:    Each action tends to be the OPPOSITE of the last one"
+            )
         elif self.serial_correlation > 0.1:
-            lines.append(f"  ρ₁  = {self.serial_correlation:+.3f}  ← Positive autocorrelation (streaky)")
+            findings.append(
+                f"  Action link:    Each action tends to REPEAT the last one"
+            )
         else:
-            lines.append(f"  ρ₁  = {self.serial_correlation:+.3f}  ← Near zero (IID-consistent)")
+            findings.append(f"  Action link:    Actions look independent of each other")
+
+        # Run length
+        if self.run_length_score > 5.0:
+            findings.append(
+                f"  Streaks:        Runs of same action are shorter than random would produce"
+            )
+        else:
+            findings.append(f"  Streaks:        Normal streak lengths")
+
+        # LZ complexity
+        if self.normalized_lz_complexity < 0.85:
+            findings.append(
+                f"  Complexity:     Sequence is more predictable/structured than random"
+            )
+        elif self.normalized_lz_complexity > 1.05:
+            findings.append(
+                f"  Complexity:     Sequence is unusually complex"
+            )
+        else:
+            findings.append(f"  Complexity:     Normal")
+
+        # LLR
+        if self.log_likelihood_ratio > 1.0:
+            findings.append(
+                f"  Pattern signal: Strong evidence of sequential patterns"
+            )
+        elif self.log_likelihood_ratio > 0.0:
+            findings.append(
+                f"  Pattern signal: Mild evidence of sequential patterns"
+            )
+        else:
+            findings.append(
+                f"  Pattern signal: Consistent with random play"
+            )
+
+        lines.extend(findings)
+        return "\n".join(lines)
+
+    def _technical_summary(self, gto_prob: float) -> str:
+        """Technical summary with metric abbreviations."""
+        lines = [f"  Session Feature Analysis (n={self.n_observations}, P={gto_prob:.3f})"]
+        lines.append("  " + "=" * 60)
+
+        # LLR
+        if self.log_likelihood_ratio > 1.0:
+            lines.append(f"    LLR = {self.log_likelihood_ratio:+.2f}  <- Strong Markov signal")
+        elif self.log_likelihood_ratio > 0.0:
+            lines.append(f"    LLR = {self.log_likelihood_ratio:+.2f}  <- Mild Markov signal")
+        else:
+            lines.append(f"    LLR = {self.log_likelihood_ratio:+.2f}  <- Consistent with IID")
+
+        # Alternation
+        if self.alternation_deviation > 0.05:
+            lines.append(f"    dA  = {self.alternation_deviation:+.3f}  <- Over-alternation (human bias)")
+        elif self.alternation_deviation < -0.05:
+            lines.append(f"    dA  = {self.alternation_deviation:+.3f}  <- Under-alternation (streaky)")
+        else:
+            lines.append(f"    dA  = {self.alternation_deviation:+.3f}  <- Normal range")
+
+        # Run length
+        lines.append(f"    RLS = {self.run_length_score:.2f}")
+        if self.run_length_score > 5.0:
+            lines[-1] += "  <- Runs shorter than expected (human)"
+
+        # LZ complexity
+        if self.normalized_lz_complexity < 0.85:
+            lines.append(f"    LZC = {self.normalized_lz_complexity:.3f}  <- Compressible (patterned)")
+        elif self.normalized_lz_complexity > 1.05:
+            lines.append(f"    LZC = {self.normalized_lz_complexity:.3f}  <- Over-complex")
+        else:
+            lines.append(f"    LZC = {self.normalized_lz_complexity:.3f}  <- Normal complexity")
+
+        # Frequency drift
+        lines.append(f"    FD  = {self.frequency_drift:.4f}")
+
+        # Serial correlation
+        if self.serial_correlation < -0.1:
+            lines.append(f"    r1  = {self.serial_correlation:+.3f}  <- Negative autocorrelation (alternation)")
+        elif self.serial_correlation > 0.1:
+            lines.append(f"    r1  = {self.serial_correlation:+.3f}  <- Positive autocorrelation (streaky)")
+        else:
+            lines.append(f"    r1  = {self.serial_correlation:+.3f}  <- Near zero (IID-consistent)")
 
         return "\n".join(lines)
 

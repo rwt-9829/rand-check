@@ -37,32 +37,46 @@ class ValidationMetrics:
 
     def summary(self) -> str:
         lines = []
-        lines.append("╔══════════════════════════════════════════════════════════╗")
-        lines.append("║          VALIDATION / CALIBRATION REPORT                ║")
-        lines.append("╚══════════════════════════════════════════════════════════╝")
+        lines.append("  " + "=" * 58)
+        lines.append("  DETECTION ENGINE ACCURACY REPORT")
+        lines.append("  " + "=" * 58)
         lines.append("")
-        lines.append(f"  Sequences evaluated: {self.n_sequences}")
-        lines.append(f"    Human (H₁):       {self.n_human}")
-        lines.append(f"    IID (H₀):         {self.n_iid}")
+        lines.append(f"  Sequences tested:  {self.n_sequences}")
+        lines.append(f"    Patterned:       {self.n_human}")
+        lines.append(f"    Truly random:    {self.n_iid}")
         lines.append("")
-        lines.append(f"  Prediction Metrics:")
-        lines.append(f"    Brier score:       {self.brier_score:.4f}")
-        lines.append(f"    Log-loss (model):  {self.log_loss:.4f}")
-        lines.append(f"    Log-loss (IID):    {self.log_loss_baseline:.4f}")
+
+        # Prediction quality
+        lines.append(f"  PREDICTION ACCURACY")
+        lines.append("  " + "-" * 40)
+        lines.append(f"    Brier score:         {self.brier_score:.4f}  (lower is better, 0 = perfect)")
+        lines.append(f"    Model log-loss:      {self.log_loss:.4f}")
+        lines.append(f"    Baseline log-loss:   {self.log_loss_baseline:.4f}  (naive always-GTO guess)")
         ll_improvement = self.log_loss_baseline - self.log_loss
-        lines.append(f"    Improvement:       {ll_improvement:+.4f} ({ll_improvement/max(self.log_loss_baseline, 1e-10)*100:+.1f}%)")
+        pct = ll_improvement / max(self.log_loss_baseline, 1e-10) * 100
+        if ll_improvement > 0:
+            lines.append(f"    --> Model is {pct:.1f}% better than the naive baseline")
+        else:
+            lines.append(f"    --> Model is {abs(pct):.1f}% worse than baseline (needs tuning)")
+
+        # Detection power
         lines.append("")
-        lines.append(f"  Detection Power (P(π_n > 0.75 | H₁)):")
+        lines.append(f"  DETECTION POWER (can it spot patterned opponents?)")
+        lines.append("  " + "-" * 40)
         for n in sorted(self.detection_power.keys()):
             power = self.detection_power[n]
-            bar = "█" * int(power * 30)
-            lines.append(f"    n={n:3d}: {power:.3f} {bar}")
+            bar_len = int(power * 30)
+            bar = "#" * bar_len + "." * (30 - bar_len)
+            lines.append(f"    After {n:3d} hands: {bar} {power * 100:.1f}%")
+
+        # False positive rate
         lines.append("")
-        lines.append(f"  False Positive Rate (P(π_n > 0.75 | H₀)):")
+        lines.append(f"  FALSE ALARM RATE (does it wrongly flag random opponents?)")
+        lines.append("  " + "-" * 40)
         for n in sorted(self.false_positive_rate.keys()):
             fpr = self.false_positive_rate[n]
-            status = "✓ PASS" if fpr < 0.05 else "✗ FAIL"
-            lines.append(f"    n={n:3d}: {fpr:.3f} {status}")
+            status = "PASS (< 5%)" if fpr < 0.05 else "FAIL (too high!)"
+            lines.append(f"    After {n:3d} hands: {fpr * 100:.1f}%  {status}")
 
         return "\n".join(lines)
 
