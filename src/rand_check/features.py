@@ -6,11 +6,11 @@ Computes the six diagnostic features from the full binary sequence:
   2. Alternation Rate Deviation  — ΔA = A − 2P(1−P)
   3. Run Length Score             — −Σ log P(run ≥ k | Bernoulli)
   4. Normalized LZ Complexity     — LZC / LZC_expected
-  5. Frequency Drift              — variance of windowed 3bet frequency
-  6. Lag-1 Serial Correlation     — Corr(x_i, x_{i−1})
+  5. Frequency Drift              -- variance of windowed frequency of 1s
+  6. Lag-1 Serial Correlation     -- Corr(x_i, x_{i-1})
 
 All features are designed to detect human-generated departures from IID
-Bernoulli randomness, even at small sample sizes (n ≈ 30–100).
+Bernoulli randomness, even at small sample sizes (n ~ 30-100).
 """
 
 from __future__ import annotations
@@ -42,24 +42,24 @@ class FeatureVector:
             "serial_correlation": self.serial_correlation,
         }
 
-    def detection_summary(self, gto_prob: float, detailed: bool = False) -> str:
+    def detection_summary(self, baseline_prob: float, detailed: bool = False) -> str:
         """Human-readable summary of which biases are detected.
 
         Parameters
         ----------
-        gto_prob : float
-            The GTO baseline probability.
+        baseline_prob : float
+            The baseline probability.
         detailed : bool
             If True, show technical metric names. If False, use plain English.
         """
         if detailed:
-            return self._technical_summary(gto_prob)
-        return self._friendly_summary(gto_prob)
+            return self._technical_summary(baseline_prob)
+        return self._friendly_summary(baseline_prob)
 
-    def _friendly_summary(self, gto_prob: float) -> str:
+    def _friendly_summary(self, baseline_prob: float) -> str:
         """Plain-English feature summary."""
         lines = []
-        lines.append(f"  PATTERN ANALYSIS ({self.n_observations} hands, baseline: {gto_prob * 100:.1f}%)")
+        lines.append(f"  PATTERN ANALYSIS ({self.n_observations} observations, baseline: {baseline_prob * 100:.1f}%)")
         lines.append("  " + "-" * 50)
 
         findings = []
@@ -67,48 +67,48 @@ class FeatureVector:
         # Alternation
         if self.alternation_deviation > 0.05:
             findings.append(
-                f"  Alternation:    Too much switching back and forth "
+                f"  Alternation:    Elevated alternation rate "
                 f"(+{self.alternation_deviation:.1%} above expected)"
             )
         elif self.alternation_deviation < -0.05:
             findings.append(
-                f"  Alternation:    Too streaky -- tends to repeat the same action "
+                f"  Alternation:    Depressed alternation -- tendency toward repetition "
                 f"({self.alternation_deviation:.1%} below expected)"
             )
         else:
-            findings.append(f"  Alternation:    Normal")
+            findings.append(f"  Alternation:    Within expected range")
 
         # Serial correlation
         if self.serial_correlation < -0.1:
             findings.append(
-                f"  Action link:    Each action tends to be the OPPOSITE of the last one"
+                f"  Serial dep.:    Negative -- successive values tend to alternate"
             )
         elif self.serial_correlation > 0.1:
             findings.append(
-                f"  Action link:    Each action tends to REPEAT the last one"
+                f"  Serial dep.:    Positive -- successive values tend to cluster"
             )
         else:
-            findings.append(f"  Action link:    Actions look independent of each other")
+            findings.append(f"  Serial dep.:    No significant serial dependence detected")
 
         # Run length
         if self.run_length_score > 5.0:
             findings.append(
-                f"  Streaks:        Runs of same action are shorter than random would produce"
+                f"  Run lengths:    Shorter than expected under randomness"
             )
         else:
-            findings.append(f"  Streaks:        Normal streak lengths")
+            findings.append(f"  Run lengths:    Consistent with randomness")
 
         # LZ complexity
         if self.normalized_lz_complexity < 0.85:
             findings.append(
-                f"  Complexity:     Sequence is more predictable/structured than random"
+                f"  Complexity:     Below average -- more structured than expected"
             )
         elif self.normalized_lz_complexity > 1.05:
             findings.append(
-                f"  Complexity:     Sequence is unusually complex"
+                f"  Complexity:     Above average"
             )
         else:
-            findings.append(f"  Complexity:     Normal")
+            findings.append(f"  Complexity:     Within expected range")
 
         # LLR
         if self.log_likelihood_ratio > 1.0:
@@ -121,15 +121,15 @@ class FeatureVector:
             )
         else:
             findings.append(
-                f"  Pattern signal: Consistent with random play"
+                f"  Pattern signal: Consistent with random generation"
             )
 
         lines.extend(findings)
         return "\n".join(lines)
 
-    def _technical_summary(self, gto_prob: float) -> str:
+    def _technical_summary(self, baseline_prob: float) -> str:
         """Technical summary with metric abbreviations."""
-        lines = [f"  Session Feature Analysis (n={self.n_observations}, P={gto_prob:.3f})"]
+        lines = [f"  Session Feature Analysis (n={self.n_observations}, P={baseline_prob:.3f})"]
         lines.append("  " + "=" * 60)
 
         # LLR
@@ -175,15 +175,15 @@ class FeatureVector:
         return "\n".join(lines)
 
 
-def compute_features(sequence: list[int], gto_prob: float) -> FeatureVector:
+def compute_features(sequence: list[int], baseline_prob: float) -> FeatureVector:
     """Compute all six features from a binary sequence.
 
     Parameters
     ----------
     sequence : list[int]
-        Binary sequence of actions (0 = fold/call, 1 = 3bet).
-    gto_prob : float
-        The GTO baseline probability P.
+        Binary sequence (0s and 1s).
+    baseline_prob : float
+        The baseline probability P.
 
     Returns
     -------
@@ -194,7 +194,7 @@ def compute_features(sequence: list[int], gto_prob: float) -> FeatureVector:
         return FeatureVector(0, 0, 0, 1, 0, 0, n)
 
     arr = np.array(sequence, dtype=float)
-    p = gto_prob
+    p = baseline_prob
 
     llr = _log_likelihood_ratio(sequence, p)
     alt_dev = _alternation_deviation(sequence, p)
@@ -221,7 +221,7 @@ def compute_features(sequence: list[int], gto_prob: float) -> FeatureVector:
 def _log_likelihood_ratio(seq: list[int], p: float) -> float:
     """LLR = log P(data | Markov(1) MLE) − log P(data | IID Bernoulli(P)).
 
-    Positive → Markov model fits better → human-generated signal.
+    Positive: Markov model fits better, indicating human-generated signal.
     """
     n = len(seq)
     if n < 2:
@@ -276,7 +276,7 @@ def _alternation_deviation(seq: list[int], p: float) -> float:
 def _run_length_score(seq: list[int], p: float) -> float:
     """Score = −Σ log P(run ≥ k | IID Bernoulli(P)).
 
-    Higher score → runs are shorter than expected → human-generated.
+    Higher score: runs are shorter than expected, indicating human generation.
     """
     if len(seq) < 2:
         return 0.0
@@ -375,10 +375,10 @@ def _normalized_lz_complexity(seq: list[int], n: int) -> float:
 # ═══════════════════════════════════════════════════════════════════════
 
 def _frequency_drift(arr: np.ndarray, window: int = 20) -> float:
-    """Variance of local 3bet frequency in sliding windows.
+    """Variance of local frequency of 1s in sliding windows.
 
-    RNG is stationary → low drift.  Humans drift as their "mental
-    account" resets.
+    RNG is stationary -> low drift.  Humans drift as their mental
+    model resets.
     """
     n = len(arr)
     if n < window:
@@ -394,10 +394,10 @@ def _frequency_drift(arr: np.ndarray, window: int = 20) -> float:
 # ═══════════════════════════════════════════════════════════════════════
 
 def _serial_correlation(arr: np.ndarray) -> float:
-    """ρ₁ = Corr(x_i, x_{i-1}).
+    """Lag-1 serial correlation = Corr(x_i, x_{i-1}).
 
     Expected under IID: 0.
-    Humans: ρ₁ < 0 (negative autocorrelation — alternation).
+    Humans: negative autocorrelation (alternation bias).
     """
     n = len(arr)
     if n < 3:

@@ -1,8 +1,8 @@
-# rand-check
+﻿# rand-check
 
-**Detect patterns in your poker opponents' 3-bet decisions and exploit them in real time.**
+**Detect patterns in binary (0/1) sequences and predict the next outcome.**
 
-Most players *think* they're randomizing their 3-bets, but humans are bad at being random. They alternate too much, avoid long streaks, or fall into the gambler's fallacy. **rand-check** catches these biases and tells you how to adjust.
+Humans are bad at producing random sequences. They over-alternate, avoid streaks, and fall into predictable patterns. **rand-check** catches these biases using Bayesian inference and tells you what to expect next.
 
 ---
 
@@ -24,12 +24,10 @@ Most players *think* they're randomizing their 3-bets, but humans are bad at bei
 
 ## What It Does
 
-1. **Watches** your opponent's 3-bet/fold decisions hand by hand.
-2. **Detects** whether those decisions are truly random or follow human patterns.
-3. **Predicts** the probability of their next 3-bet.
-4. **Recommends** how to exploit any detected bias (e.g. "widen your calling range").
-
-Works for both **6-max** and **heads-up** formats.
+1. **Observes** a sequence of binary outcomes (0s and 1s) one at a time.
+2. **Detects** whether the sequence is truly random or follows human-generated patterns.
+3. **Predicts** the probability that the next value will be 1.
+4. **Reports** any detected bias with plain-English explanations.
 
 ---
 
@@ -37,14 +35,14 @@ Works for both **6-max** and **heads-up** formats.
 
 **Requirements:** Python 3.9 or newer.
 
-### Step 1 — Clone the repository
+### Step 1 --- Clone the repository
 
 ```bash
 git clone https://github.com/your-username/rand-check.git
 cd rand-check
 ```
 
-### Step 2 — Create a virtual environment and install
+### Step 2 --- Create a virtual environment and install
 
 <details>
 <summary><strong>Windows (PowerShell)</strong></summary>
@@ -99,18 +97,12 @@ After installing, try the interactive demo:
 rand-check demo
 ```
 
-This generates a fake opponent with known biases and shows the detection engine working hand by hand. You'll see a progress bar for each hand showing how confident the engine is that the opponent is following a pattern.
+This generates a synthetic sequence with known biases and shows the detection engine working observation by observation. You will see a progress bar showing how confident the engine is that a pattern is present.
 
-To analyze a real session, record your opponent's decisions as 1s and 0s (1 = 3-bet, 0 = fold/call), then:
+To analyze a sequence you already have, enter it as 0s and 1s:
 
 ```
 rand-check analyze 010100101001010010100101001010
-```
-
-Or use B/F notation if you find that easier:
-
-```
-rand-check analyze BFFBFBFFBFBFBFFBFBFFBFBFBFFBFB
 ```
 
 ---
@@ -119,9 +111,9 @@ rand-check analyze BFFBFBFFBFBFBFFBFBFFBFBFBFFBFB
 
 rand-check has four commands: **demo**, **analyze**, **simulate**, and **validate**.
 
-### `rand-check demo` — See a live example
+### `rand-check demo` --- See a live example
 
-Runs a walkthrough using a simulated opponent so you can see detection working hand by hand. Great for understanding what the tool does.
+Runs a walkthrough using a simulated sequence so you can see detection in action.
 
 ```
 rand-check demo [OPTIONS]
@@ -129,90 +121,83 @@ rand-check demo [OPTIONS]
 
 | Option | Default | What it means |
 |--------|---------|-------------|
-| `--hands N` | `80` | How many hands to simulate |
-| `--baseline P` | `0.25` (6-max) / `0.23` (HU) | How often a balanced player would 3-bet |
-| `--opponent TYPE` | `alternator` | What kind of fake opponent to generate |
-| `--hu` | off | Heads-up mode |
+| `--length N` | `80` | How many observations to simulate |
+| `--baseline P` | `0.50` | Expected probability of a 1 under the null hypothesis |
+| `--model TYPE` | `alternator` | What kind of synthetic sequence to generate |
 | `--detailed` | off | Show full technical output |
 
-**Opponent types** (use with `--opponent`):
+**Model types** (use with `--model`):
 
 | Name | What it simulates |
 |------|-------------------|
 | `random` | Truly random (no exploitable pattern) |
-| `alternator` | Over-alternates between 3-bet and fold (most common human bias) |
-| `gamblers` | Avoids repeating recent outcomes ("I just 3-bet, so I shouldn't again") |
-| `counter` | Mentally tracks frequency ("1 in 4 hands") |
-| `streak-averse` | Never 3-bets several times in a row |
+| `alternator` | Over-alternates between 0 and 1 (most common human bias) |
+| `gamblers` | Avoids repeating recent outcomes |
+| `counter` | Mentally tracks frequency to hit a target rate |
+| `streak-averse` | Never produces long runs of the same value |
 | `mixed` | Randomly switches between two strategies |
-| `shifter` | Plays one way, then suddenly changes mid-session |
-
-> **Note:** The old technical model names (`iid`, `markov_alternation`, `gamblers_fallacy`, `run_averse`, `mixture`, `changepoint`) still work too.
+| `shifter` | Uses one strategy, then suddenly changes mid-sequence |
 
 **Examples:**
 
 ```bash
-# Default demo — alternation-biased opponent, 80 hands
+# Default demo --- alternation-biased, 80 observations
 rand-check demo
 
-# Heads-up demo with a gambler's fallacy opponent over 120 hands
-rand-check demo --hu --opponent gamblers --hands 120
+# Gambler's fallacy model over 120 observations, baseline 0.3
+rand-check demo --model gamblers --length 120 --baseline 0.3
 
-# Full technical output for advanced users
+# Full technical output
 rand-check demo --detailed
 ```
 
 ---
 
-### `rand-check analyze` — Analyze a real session
+### `rand-check analyze` --- Analyze a sequence
 
-Feed in your opponent's 3-bet decisions and get a full bias report.
+Feed in a binary sequence and get a full bias report.
 
 ```
 rand-check analyze SEQUENCE [OPTIONS]
 ```
 
-**Input formats** — use whichever is easiest:
+**Input formats** --- use whichever is easiest:
 
 | Format | Example |
 |--------|---------|
 | Binary string | `rand-check analyze 010010110010` |
 | Space-separated | `rand-check analyze "0 1 0 0 1 0 1 1"` |
 | Comma-separated | `rand-check analyze "0,1,0,0,1,0,1,1"` |
-| B/F notation | `rand-check analyze BFFBFBFF` |
-
-Where: **1** or **B** = they 3-bet, **0** or **F** = they folded or called.
 
 | Option | Default | What it means |
 |--------|---------|-------------|
-| `--baseline P` | `0.25` / `0.23` (HU) | How often a balanced player would 3-bet |
-| `--hu` | off | Heads-up mode |
+| `--baseline P` | `0.50` | Expected probability of a 1 |
 | `--detailed` | off | Show full technical metrics |
 
 **Examples:**
 
 ```bash
-# Analyze a 30-hand 6-max session
+# Analyze a 30-observation sequence
 rand-check analyze 010100101001010010100101001010
 
-# Heads-up session with a specific baseline
-rand-check analyze BFFBFBFFBF --hu --baseline 0.20
+# Custom baseline probability
+rand-check analyze 010100101001 --baseline 0.3
 
 # Full technical breakdown
 rand-check analyze 010100101001 --detailed
 ```
 
 The report tells you:
-- Whether the opponent appears to be **randomizing** or **following a pattern**
+- Whether the sequence appears to be **random** or **patterned**
 - What kind of bias was detected (alternation, gambler's fallacy, etc.)
-- How their 3-bet rate compares to balanced play
-- **What to do about it** — plain-English suggestions
+- How the observed frequency compares to the baseline
+- A plain-English summary
 
 ---
 
-### `rand-check simulate` — Generate fake sequences
+### `rand-check simulate` --- Generate synthetic sequences
 
-Outputs a binary string from a simulated opponent. Useful for testing or piping into `analyze`.
+Outputs a binary string from a synthetic model. Useful for testing or piping into `analyze`.
 
 ```
 rand-check simulate TYPE N [OPTIONS]
@@ -220,16 +205,15 @@ rand-check simulate TYPE N [OPTIONS]
 
 | Option | Default | What it means |
 |--------|---------|-------------|
-| `TYPE` | *(required)* | Opponent type (same names as `--opponent` above) |
-| `N` | *(required)* | Number of hands |
-| `--baseline P` | auto | 3-bet probability |
+| `TYPE` | *(required)* | Model type (same names as `--model` above) |
+| `N` | *(required)* | Number of observations |
+| `--baseline P` | `0.50` | Probability of a 1 |
 | `--seed N` | random | Seed for reproducibility |
-| `--hu` | off | Heads-up mode |
 
 **Examples:**
 
 ```bash
-# Generate 200 hands of alternation-biased play
+# Generate 200 alternation-biased observations
 rand-check simulate alternator 200
 
 # Reproducible gambler's fallacy sequence
@@ -241,9 +225,9 @@ rand-check analyze $(rand-check simulate counter 150)
 
 ---
 
-### `rand-check validate` — Test the engine's accuracy
+### `rand-check validate` --- Test the engine's accuracy
 
-Generates many sequences from every opponent type and measures detection performance.
+Generates many sequences from every model type and measures detection performance.
 
 ```
 rand-check validate [OPTIONS]
@@ -251,17 +235,16 @@ rand-check validate [OPTIONS]
 
 | Option | Default | What it means |
 |--------|---------|-------------|
-| `--sequences N` | `50` | Test sequences per opponent type |
-| `--hands N` | `80` | Hands per sequence |
-| `--baseline P` | auto | 3-bet probability |
+| `--sequences N` | `50` | Test sequences per model type |
+| `--length N` | `80` | Observations per sequence |
+| `--baseline P` | `0.50` | Probability of a 1 |
 | `--seed N` | `42` | Random seed |
-| `--hu` | off | Heads-up mode |
 
 **Examples:**
 
 ```bash
 rand-check validate
-rand-check validate --sequences 200 --hands 150
+rand-check validate --sequences 200 --length 150
 ```
 
 ---
@@ -270,24 +253,21 @@ rand-check validate --sequences 200 --hands 150
 
 You can also use rand-check as a library.
 
-### Live prediction (hand by hand)
+### Live prediction (observation by observation)
 
 ```python
 from rand_check.prediction import PredictionEngine
 
-engine = PredictionEngine(default_gto_prob=0.25)
-
-# For heads-up:
-# engine = PredictionEngine.for_heads_up()
+engine = PredictionEngine(default_baseline_prob=0.5)
 
 actions = [0, 1, 0, 0, 1, 0, 1, 1, 0, 0]
 for action in actions:
     result = engine.process_action(action)
 
-    print(f"P(next 3bet) = {result.predicted_3bet_prob:.3f}")
+    print(f"P(next=1)    = {result.predicted_prob:.3f}")
     print(f"Detection    = {result.detection_confidence:.3f}")
     print(f"Edge         = {result.edge:+.3f}")
-    print(f"Suggestion   = {result.exploitation_suggestion}")
+    print(f"Suggestion   = {result.suggestion}")
     print()
 ```
 
@@ -301,7 +281,7 @@ report = analyzer.analyze(
     sequence=[0, 1, 0, 1, 0, 0, 1, 0, 1, 0,
               0, 1, 0, 1, 0, 0, 1, 0, 1, 0,
               0, 1, 0, 1, 0, 0, 1, 0, 1, 0],
-    gto_prob=0.25,
+    baseline_prob=0.5,
 )
 
 # Friendly output (default)
@@ -317,23 +297,23 @@ print(report.summary(detailed=True))
 
 ### The simple view (default)
 
-After each hand, you see:
+After each observation, you see:
 
 | Column | What it means |
 |--------|---------------|
-| **Hand** | Hand number in the session |
-| **Action** | What the opponent did (3-BET or fold) |
-| **Pattern?** | A progress bar showing how confident the engine is that the opponent is following a pattern. 0% = looks random. 100% = definitely patterned. |
-| **Next 3bet** | The engine's prediction: how likely is the opponent to 3-bet on the next hand? |
-| **Status** | Plain-English summary of what the engine thinks |
+| **#** | Observation number |
+| **Value** | What was observed (0 or 1) |
+| **Pattern?** | Progress bar showing detection confidence. 0% = looks random. 100% = definitely patterned. |
+| **Next P(1)** | Predicted probability the next value will be 1 |
+| **Status** | Plain-English summary |
 
 ### The post-session report
 
 The report at the end tells you:
 
-- **Verdict** — Is this opponent randomizing or patterned?
-- **Detected bias** — What kind of pattern (alternation, gambler's fallacy, etc.)
-- **What to do** — Exploitation suggestion in plain English
+- **Verdict** --- Is this sequence random or patterned?
+- **Detected bias** --- What kind of pattern (alternation, gambler's fallacy, etc.)
+- **Summary** --- Plain-English explanation of what was found
 
 ### The detailed view (`--detailed`)
 
@@ -342,9 +322,9 @@ For advanced users, `--detailed` shows the raw detection metrics:
 | Metric | What it means |
 |--------|---------------|
 | Detect | Detection confidence (0 = random, 1 = patterned) |
-| Next P | Predicted 3-bet probability for next hand |
-| GTO | Balanced 3-bet rate for this spot |
-| Edge | Difference between predicted and balanced (positive = over-3betting) |
+| Next P | Predicted probability for next observation |
+| Base | Baseline probability (null hypothesis) |
+| Edge | Difference between predicted and baseline |
 | 95% CI | Confidence interval around the prediction |
 
 ---
@@ -360,24 +340,24 @@ pytest --cov=rand_check --cov-report=term-missing
 
 ## How It Works
 
-rand-check combines three Bayesian layers that run simultaneously on every hand:
+rand-check combines three Bayesian layers that run simultaneously on every observation:
 
-### Layer 1 — Pattern Detection (always active)
+### Layer 1 --- Pattern Detection (always active)
 
-A statistical model that learns whether the opponent's next action depends on their previous action (e.g. "after a 3-bet, they tend to fold next"). Converges to accurate predictions in ~20 hands.
+A Bayesian Markov model that learns whether the next value depends on the previous value (e.g. "after a 1, the next value tends to be 0"). Converges in ~20 observations.
 
-### Layer 2 — Complex Patterns (activates after 60 hands)
+### Layer 2 --- Complex Patterns (activates after 60 observations)
 
-Catches more complex patterns like "they only 3-bet after two consecutive folds." Needs more data to be reliable, so it kicks in after 60 observations.
+Catches higher-order patterns like "never produces three 1s in a row." Uses Context Tree Weighting to model patterns up to depth 3. Needs more data to be reliable, so it activates after 60 observations.
 
-### Layer 3 — Strategy Shift Detection (always active)
+### Layer 3 --- Changepoint Detection (always active)
 
-Watches for sudden strategy changes — e.g. the opponent goes on tilt or starts playing differently. When a shift is detected, the engine resets its beliefs and adapts quickly.
+Watches for sudden strategy changes --- e.g. the sequence generator switches behavior mid-stream. When a shift is detected, the engine resets its beliefs and adapts quickly.
 
 ### Technical details
 
-- O(1) per hand for the core layer — fast enough for real-time play
-- Informative priors converge in ~20 hands
+- O(1) per observation for the core layer
+- Informative priors converge in ~20 observations
 - Built on: Bayesian Markov models, Context Tree Weighting (Willems et al. 1995), and Bayesian Online Changepoint Detection (Adams & MacKay 2007)
 
 ---
@@ -388,15 +368,15 @@ Watches for sudden strategy changes — e.g. the opponent goes on tilt or starts
 |------|--------------|
 | `cli.py` | Command-line interface |
 | `models.py` | Core data types |
-| `prediction.py` | Main prediction engine that combines all layers |
-| `detection.py` | Human-vs-random pattern detector |
-| `bayesian_markov.py` | Statistical model for sequential patterns |
-| `ctw.py` | Complex multi-step pattern detection |
-| `bocpd.py` | Strategy shift detection |
-| `features.py` | Feature extraction (alternation, streaks, complexity) |
+| `prediction.py` | Main prediction engine combining all layers |
+| `detection.py` | Pattern vs. random detector |
+| `bayesian_markov.py` | Markov(1) model with Beta-Binomial priors |
+| `ctw.py` | Context Tree Weighting for complex patterns |
+| `bocpd.py` | Bayesian Online Changepoint Detection |
+| `features.py` | Feature extraction (alternation rate, streaks, complexity) |
 | `analyzer.py` | Post-session analysis with bias fingerprinting |
-| `synthetic.py` | Fake opponent generators for testing and demos |
-| `solver_lookup.py` | GTO 3-bet frequency tables |
+| `synthetic.py` | Synthetic sequence generators for testing and demos |
+| `solver_lookup.py` | Baseline probability constant |
 | `validation.py` | Accuracy testing framework |
 
 ---
@@ -412,4 +392,4 @@ Watches for sudden strategy changes — e.g. the opponent goes on tilt or starts
 
 ## License
 
-MIT
+MIT

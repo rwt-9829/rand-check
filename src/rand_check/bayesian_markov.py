@@ -1,23 +1,24 @@
-"""Bayesian Markov(1) updater with conjugate Beta-Binomial priors.
+﻿"""Bayesian Markov(1) updater with conjugate Beta-Binomial priors.
 
-This is the core live-update engine.  After every hand it performs an O(1)
-update of transition counts and returns the posterior predictive probability
-of the next action being a 3bet, conditioned on the most recent action.
+This is the core live-update engine.  After every observation it performs
+an O(1) update of transition counts and returns the posterior predictive
+probability of the next value being 1, conditioned on the most recent
+observation.
 
 The prior structure encodes known human cognitive biases:
-  - Alternation bias: δ ≈ 0.10 added to P(switch) transitions
-  - Run-aversion:   δ subtracted from P(repeat) transitions
+  - Alternation bias: delta ~ 0.10 added to P(switch) transitions
+  - Run-aversion:   delta subtracted from P(repeat) transitions
 
-The prior *strength* κ controls how many pseudo-observations the prior
-is worth.  κ = 15 means "the prior dominates for the first ~15 hands,
-then data takes over" — exactly matching the design spec.
+The prior *strength* kappa controls how many pseudo-observations the prior
+is worth.  kappa = 15 means "the prior dominates for the first ~15
+observations, then data takes over".
 
 Mathematical basis:
-    P(x_n = 1 | x_{n-1} = s, data) = (n_{s,1} + α_{s,1}) /
-                                       (n_{s,0} + n_{s,1} + α_{s,0} + α_{s,1})
+    P(x_n = 1 | x_{n-1} = s, data) = (n_{s,1} + alpha_{s,1}) /
+                                       (n_{s,0} + n_{s,1} + alpha_{s,0} + alpha_{s,1})
 
-    where  α_{s,j} = prior pseudo-count for transition (s → j)
-           n_{s,j} = observed count of transition   (s → j)
+    where  alpha_{s,j} = prior pseudo-count for transition (s -> j)
+           n_{s,j} = observed count of transition   (s -> j)
 
     This is the standard Beta-Binomial conjugate posterior predictive.
 """
@@ -33,22 +34,22 @@ from scipy.stats import beta as beta_dist
 
 @dataclass
 class BayesianMarkovUpdater:
-    """Markov(1) model with informative Beta priors for 3bet prediction.
+    """Markov(1) model with informative Beta priors for binary prediction.
 
     Parameters
     ----------
-    gto_prob : float
-        The GTO baseline 3bet probability P for the current spot.
+    baseline_prob : float
+        The baseline probability P of outcome 1 under the null hypothesis.
     kappa : float
-        Prior pseudo-count strength.  Larger → prior dominates longer.
+        Prior pseudo-count strength.  Larger -> prior dominates longer.
     delta : float
         Alternation bias offset.  Humans over-alternate by roughly this much.
     """
-    gto_prob: float = 0.25
+    baseline_prob: float = 0.50
     kappa: float = 15.0
     delta: float = 0.10
 
-    # ── Internal state ───────────────────────────────────────────────
+    # -- Internal state ------------------------------------------------
     # Transition counts  n[prev_action][curr_action]
     _counts: list = field(default_factory=lambda: [[0.0, 0.0], [0.0, 0.0]])
     _last_action: Optional[int] = field(default=None, repr=False)
@@ -63,21 +64,22 @@ class BayesianMarkovUpdater:
     def _setup_priors(self) -> None:
         """Compute informative Beta prior hyperparameters.
 
-        Given GTO prob P, pseudo-count strength κ, and alternation bias δ:
+        Given baseline prob P, pseudo-count strength kappa, and alternation
+        bias delta:
 
-        From state 0 (prev = fold/call):
-            α_{0,1} = P · κ            (base rate of 3betting)
-            α_{0,0} = (1 - P) · κ
+        From state 0 (prev = 0):
+            alpha_{0,1} = P * kappa
+            alpha_{0,0} = (1 - P) * kappa
 
-        From state 1 (prev = 3bet):
-            α_{1,0} = (1 - P + δ) · κ  (humans more likely to switch away)
-            α_{1,1} = (P - δ) · κ      (humans less likely to repeat 3bet)
+        From state 1 (prev = 1):
+            alpha_{1,0} = (1 - P + delta) * kappa  (humans more likely to switch)
+            alpha_{1,1} = (P - delta) * kappa       (humans less likely to repeat)
         """
-        p = self.gto_prob
+        p = self.baseline_prob
         k = self.kappa
         d = self.delta
 
-        # Clamp (P - δ) so prior pseudo-count stays positive
+        # Clamp (P - delta) so prior pseudo-count stays positive
         p_minus_d = max(p - d, 0.01)
         one_minus_p_plus_d = min(1.0 - p + d, 0.99)
 
@@ -86,16 +88,16 @@ class BayesianMarkovUpdater:
             [one_minus_p_plus_d * k, p_minus_d * k],  # from state 1
         ]
 
-    def reset(self, gto_prob: Optional[float] = None) -> None:
+    def reset(self, baseline_prob: Optional[float] = None) -> None:
         """Soft reset: keep priors, discard observed counts.
 
-        Optionally update the GTO probability (e.g. after a position change).
+        Optionally update the baseline probability.
         """
         self._counts = [[0.0, 0.0], [0.0, 0.0]]
         self._last_action = None
         self._n_updates = 0
-        if gto_prob is not None:
-            self.gto_prob = gto_prob
+        if baseline_prob is not None:
+            self.baseline_prob = baseline_prob
             self._setup_priors()
 
     def update(self, action: int) -> None:
@@ -104,7 +106,7 @@ class BayesianMarkovUpdater:
         Parameters
         ----------
         action : int
-            0 = fold/call, 1 = 3bet.
+            0 or 1.
         """
         if self._last_action is not None:
             s = self._last_action
@@ -112,18 +114,18 @@ class BayesianMarkovUpdater:
         self._last_action = action
         self._n_updates += 1
 
-    # ── Posterior predictive queries ─────────────────────────────────
+    # -- Posterior predictive queries ----------------------------------
 
     def predict(self, given_last: Optional[int] = None) -> float:
-        """Return P(next = 3bet | last action, data, priors).
+        """Return P(next = 1 | last action, data, priors).
 
         If *given_last* is supplied it overrides the internally tracked
         last action (useful for hypothetical queries).
         """
         s = given_last if given_last is not None else self._last_action
         if s is None:
-            # No history yet → use marginal GTO prior
-            return self.gto_prob
+            # No history yet -> use marginal baseline prior
+            return self.baseline_prob
 
         n0 = self._counts[s][0]
         n1 = self._counts[s][1]
@@ -133,13 +135,13 @@ class BayesianMarkovUpdater:
         return (n1 + a1) / (n0 + n1 + a0 + a1)
 
     def credible_interval(self, level: float = 0.95, given_last: Optional[int] = None) -> Tuple[float, float]:
-        """Posterior credible interval for P(3bet | last action).
+        """Posterior credible interval for P(1 | last action).
 
         Uses the Beta posterior directly.
         """
         s = given_last if given_last is not None else self._last_action
         if s is None:
-            # Uninformative — wide interval
+            # Uninformative -- wide interval
             tail = (1.0 - level) / 2.0
             return (tail, 1.0 - tail)
 
@@ -164,7 +166,7 @@ class BayesianMarkovUpdater:
 
     @property
     def transition_matrix(self) -> list:
-        """Current posterior transition matrix (2×2).
+        """Current posterior transition matrix (2x2).
 
         Element [i][j] = P(curr = j | prev = i).
         """

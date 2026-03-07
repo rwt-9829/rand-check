@@ -1,8 +1,8 @@
-"""
-rand-check: 3bet Randomness Detector & Exploitative Predictor
+﻿"""
+rand-check: Binary Sequence Randomness Detector
 
-A Bayesian system for detecting non-random patterns in poker 3bet decisions
-and producing exploitative predictions in real-time.
+A Bayesian system for detecting non-random patterns in binary (0/1)
+sequences and predicting the next outcome in real-time.
 
 Key algorithms:
 - Bayesian Markov(1) updater with conjugate Beta-Binomial priors
@@ -23,19 +23,13 @@ References:
 __version__ = "0.1.0"
 
 from rand_check.models import (
-    Action,
-    HandResult,
-    Position,
-    DecisionPackage,
+    Observation,
+    AnalysisPackage,
 )
 from rand_check.prediction import PredictionEngine
-from rand_check.solver_lookup import GameFormat
 
 __all__ = [
-    "Action",
-    "HandResult",
-    "Position",
-    "DecisionPackage",
+    "Observation",
+    "AnalysisPackage",
     "PredictionEngine",
-    "GameFormat",
 ]

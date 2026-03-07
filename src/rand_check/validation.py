@@ -1,4 +1,4 @@
-"""Validation and calibration framework.
+﻿"""Validation and calibration framework.
 
 Runs the detection + prediction system against the synthetic calibration
 dataset and reports performance metrics specifically chosen for small-n
@@ -7,8 +7,7 @@ regimes:
   - Brier score (proper scoring rule, meaningful at n=20)
   - Log-loss vs IID Bernoulli(P) baseline
   - Detection power at n = 20, 40, 60, 100
-  - False positive rate (P(π_n > 0.75 | truly IID) — must be < 5%)
-  - AUC-ROC for the detection task
+  - False positive rate (P(pi_n > 0.75 | truly IID) -- must be < 5%)
 """
 
 from __future__ import annotations
@@ -19,7 +18,6 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from rand_check.prediction import PredictionEngine
-from rand_check.models import Position
 from rand_check.synthetic import GeneratedSequence, generate_calibration_dataset
 
 
@@ -29,8 +27,8 @@ class ValidationMetrics:
     brier_score: float
     log_loss: float
     log_loss_baseline: float   # IID Bernoulli baseline for comparison
-    detection_power: dict[int, float]   # n → P(π_n > 0.75 | human)
-    false_positive_rate: dict[int, float]  # n → P(π_n > 0.75 | IID)
+    detection_power: dict[int, float]   # n -> P(pi_n > 0.75 | patterned)
+    false_positive_rate: dict[int, float]  # n -> P(pi_n > 0.75 | IID)
     n_sequences: int
     n_human: int
     n_iid: int
@@ -51,7 +49,7 @@ class ValidationMetrics:
         lines.append("  " + "-" * 40)
         lines.append(f"    Brier score:         {self.brier_score:.4f}  (lower is better, 0 = perfect)")
         lines.append(f"    Model log-loss:      {self.log_loss:.4f}")
-        lines.append(f"    Baseline log-loss:   {self.log_loss_baseline:.4f}  (naive always-GTO guess)")
+        lines.append(f"    Baseline log-loss:   {self.log_loss_baseline:.4f}  (naive always-baseline guess)")
         ll_improvement = self.log_loss_baseline - self.log_loss
         pct = ll_improvement / max(self.log_loss_baseline, 1e-10) * 100
         if ll_improvement > 0:
@@ -61,22 +59,22 @@ class ValidationMetrics:
 
         # Detection power
         lines.append("")
-        lines.append(f"  DETECTION POWER (can it spot patterned opponents?)")
+        lines.append(f"  DETECTION POWER (sensitivity to patterned sequences)")
         lines.append("  " + "-" * 40)
         for n in sorted(self.detection_power.keys()):
             power = self.detection_power[n]
             bar_len = int(power * 30)
             bar = "#" * bar_len + "." * (30 - bar_len)
-            lines.append(f"    After {n:3d} hands: {bar} {power * 100:.1f}%")
+            lines.append(f"    After {n:3d} observations: {bar} {power * 100:.1f}%")
 
         # False positive rate
         lines.append("")
-        lines.append(f"  FALSE ALARM RATE (does it wrongly flag random opponents?)")
+        lines.append(f"  FALSE ALARM RATE (false positives on random sequences)")
         lines.append("  " + "-" * 40)
         for n in sorted(self.false_positive_rate.keys()):
             fpr = self.false_positive_rate[n]
-            status = "PASS (< 5%)" if fpr < 0.05 else "FAIL (too high!)"
-            lines.append(f"    After {n:3d} hands: {fpr * 100:.1f}%  {status}")
+            status = "PASS (< 5%)" if fpr < 0.05 else "FAIL (exceeds 5% threshold)"
+            lines.append(f"    After {n:3d} observations: {fpr * 100:.1f}%  {status}")
 
         return "\n".join(lines)
 
@@ -97,7 +95,7 @@ class ValidationRunner:
         dataset: list[GeneratedSequence] | None = None,
         n_per_model: int = 100,
         seq_length: int = 100,
-        gto_prob: float = 0.25,
+        baseline_prob: float = 0.50,
         seed: int = 42,
     ) -> ValidationMetrics:
         """Execute the full validation.
@@ -111,7 +109,7 @@ class ValidationRunner:
             dataset = generate_calibration_dataset(
                 n_per_model=n_per_model,
                 seq_length=seq_length,
-                gto_prob=gto_prob,
+                baseline_prob=baseline_prob,
                 seed=seed,
             )
 
@@ -121,17 +119,16 @@ class ValidationRunner:
         log_losses_baseline: list[float] = []
 
         # Detection at checkpoints
-        # checkpoint → list of (π_n, is_human)
         checkpoint_results: dict[int, list[tuple[float, bool]]] = {
             cp: [] for cp in self.checkpoints
         }
 
         for gen_seq in dataset:
             seq = gen_seq.sequence
-            p = gen_seq.gto_prob
+            p = gen_seq.baseline_prob
             is_human = gen_seq.is_human
 
-            engine = PredictionEngine(default_gto_prob=p)
+            engine = PredictionEngine(default_baseline_prob=p)
 
             for i, action in enumerate(seq):
                 hand_num = i + 1
@@ -142,7 +139,7 @@ class ValidationRunner:
                 # Brier score: (pred - actual)^2
                 brier_scores.append((pred - action) ** 2)
 
-                # Log-loss: -(actual * log(pred) + (1-actual) * log(1-pred))
+                # Log-loss
                 pred_clamped = max(min(pred, 1.0 - 1e-10), 1e-10)
                 if action == 1:
                     log_losses.append(-math.log(pred_clamped))
@@ -156,7 +153,7 @@ class ValidationRunner:
                 else:
                     log_losses_baseline.append(-math.log(1.0 - p_clamped))
 
-                # Process the hand
+                # Process the observation
                 pkg = engine.process_action(action)
 
                 # Record detection at checkpoints

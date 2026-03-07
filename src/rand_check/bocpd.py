@@ -17,8 +17,8 @@ a changepoint at any step) is constant:
 
     H(τ) = 1 / expected_run_length
 
-Design choice: ``expected_run_length = 50`` encodes "a player adjusts
-style at most once per ~50 hands".
+Design choice: ``expected_run_length = 50`` encodes "the subject adjusts
+behaviour at most once per ~50 observations".
 
 When a changepoint is detected the prediction engine should soft-reset
 its Markov transition counts and detection posterior.
@@ -95,7 +95,7 @@ class BOCPDDetector:
 
     @property
     def changepoints_detected(self) -> list[int]:
-        """List of hand numbers where changepoints were flagged."""
+        """List of observation numbers where changepoints were flagged."""
         return list(self._changepoint_log)
 
     def update(self, observation: int) -> bool:

@@ -7,10 +7,10 @@ Bayesian mixture over all Markov orders 0 … D, with weights determined
 by the data likelihood at each depth — higher-order models gain weight
 only when they demonstrably improve prediction.
 
-This layer activates after ~60 hands (configurable) and can capture
+This layer activates after ~60 observations (configurable) and can capture
 patterns up to Markov(D) that the simple Markov(1) model misses, e.g.:
-  - "Never 3bets three times in a row" (order 2)
-  - "After fold-fold-fold, always 3bets" (order 3)
+  - "Never produces three 1s in a row" (order 2)
+  - "After 0-0-0, always produces 1" (order 3)
 
 Reference:
     Willems, Shtarkov & Tjalkens (1995). "The Context-Tree Weighting

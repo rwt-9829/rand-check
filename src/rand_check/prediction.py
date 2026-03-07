@@ -1,14 +1,14 @@
-"""Live prediction engine — the main orchestrator.
+﻿"""Live prediction engine -- the main orchestrator.
 
 Combines all layers:
-  1. Solver lookup          → GTO baseline P
-  2. BayesianMarkovUpdater  → posterior predictive q_n
-  3. DetectionEngine        → π_n (is this human?)
-  4. ContextTreeWeighting   → higher-order prediction (post-60 hands)
-  5. BOCPDDetector          → changepoint detection
+  1. Baseline probability      -- user-specified P(outcome=1) under null
+  2. BayesianMarkovUpdater     -- posterior predictive q_n
+  3. DetectionEngine           -- pi_n (is this patterned?)
+  4. ContextTreeWeighting      -- higher-order prediction (post-60 observations)
+  5. BOCPDDetector             -- changepoint detection
 
-Produces a DecisionPackage after every hand — the full
-exploitation-ready output described in the design spec.
+Produces an AnalysisPackage after every observation -- the full
+analysis-ready output.
 """
 
 from __future__ import annotations
@@ -19,24 +19,19 @@ from rand_check.bayesian_markov import BayesianMarkovUpdater
 from rand_check.bocpd import BOCPDDetector
 from rand_check.ctw import ContextTreeWeighting
 from rand_check.detection import DetectionEngine
-from rand_check.models import (
-    Action,
-    DecisionPackage,
-    HandResult,
-    Position,
-)
-from rand_check.solver_lookup import GameFormat, get_default_3bet_prob, get_gto_3bet_prob
-from typing import Optional, List
+from rand_check.models import AnalysisPackage
+from rand_check.solver_lookup import DEFAULT_BASELINE_PROB
+from typing import List
 
 
 @dataclass
 class PredictionEngine:
-    """The full live system — processes hands and produces predictions.
+    """The full live system -- processes observations and produces predictions.
 
     Parameters
     ----------
-    default_gto_prob : float
-        Fallback GTO 3bet probability when position info is incomplete.
+    default_baseline_prob : float
+        Baseline probability of outcome=1 under the null hypothesis.
     kappa : float
         Prior pseudo-count strength for the Bayesian Markov model.
     delta : float
@@ -46,13 +41,13 @@ class PredictionEngine:
     ctw_max_depth : int
         Maximum context depth for CTW.
     ctw_activation : int
-        Minimum hands before CTW predictions are blended in.
+        Minimum observations before CTW predictions are blended in.
     ctw_blend_weight : float
         Weight given to CTW prediction when active (rest to Markov(1)).
     exploitation_threshold : float
-        Minimum |edge| required before suggesting exploitation.
+        Minimum |edge| required before suggesting action.
     """
-    default_gto_prob: float = 0.25
+    default_baseline_prob: float = DEFAULT_BASELINE_PROB
     kappa: float = 15.0
     delta: float = 0.10
     hazard_rate: float = 0.02
@@ -60,53 +55,42 @@ class PredictionEngine:
     ctw_activation: int = 60
     ctw_blend_weight: float = 0.35
     exploitation_threshold: float = 0.03
-    game_format: GameFormat = GameFormat.SIXMAX
 
-    # ── Sub-engines (initialized in __post_init__) ───────────────────
+    # -- Sub-engines (initialized in __post_init__) --------------------
     _detector: DetectionEngine = field(init=False, repr=False)
     _ctw: ContextTreeWeighting = field(init=False, repr=False)
     _bocpd: BOCPDDetector = field(init=False, repr=False)
     _history: List[int] = field(default_factory=list, init=False, repr=False)
-    _hands_processed: int = field(default=0, init=False)
-    _current_gto_prob: float = field(init=False)
+    _observations_processed: int = field(default=0, init=False)
+    _current_baseline_prob: float = field(init=False)
     _last_changepoint_flag: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
-        self._current_gto_prob = self.default_gto_prob
-        self._detector = DetectionEngine(gto_prob=self._current_gto_prob)
+        self._current_baseline_prob = self.default_baseline_prob
+        self._detector = DetectionEngine(baseline_prob=self._current_baseline_prob)
         self._ctw = ContextTreeWeighting(
             max_depth=self.ctw_max_depth,
             activation_threshold=self.ctw_activation,
         )
         self._bocpd = BOCPDDetector(hazard_rate=self.hazard_rate)
 
-    # ── Public API ───────────────────────────────────────────────────
+    # -- Public API ----------------------------------------------------
 
-    def process_hand(self, hand: HandResult) -> DecisionPackage:
-        """Process a single hand and return the full decision package.
+    def process_action(self, action: int) -> AnalysisPackage:
+        """Process a single binary observation and return the analysis package.
 
-        This is the main entry point called after every hand.
+        Parameters
+        ----------
+        action : int
+            0 or 1.
         """
-        action_int = hand.action.value  # 0 or 1
-
-        # Update GTO baseline for this spot
-        if hand.villain_position is not None:
-            self._current_gto_prob = get_gto_3bet_prob(
-                hand.position, hand.villain_position, hand.stack_bb,
-                game_format=self.game_format,
-            )
-        else:
-            self._current_gto_prob = get_default_3bet_prob(
-                hand.position, game_format=self.game_format,
-            )
-
         # Update all sub-engines
-        pi_n = self._detector.update(action_int)
-        self._ctw.update(action_int)
-        changepoint = self._bocpd.update(action_int)
+        pi_n = self._detector.update(action)
+        self._ctw.update(action)
+        changepoint = self._bocpd.update(action)
 
-        self._history.append(action_int)
-        self._hands_processed += 1
+        self._history.append(action)
+        self._observations_processed += 1
 
         # Handle changepoint
         if changepoint:
@@ -117,37 +101,23 @@ class PredictionEngine:
 
         return self._build_package()
 
-    def process_action(self, action: int, position: Position = Position.BB,
-                       villain_position: Optional[Position] = None,
-                       stack_bb: float = 100.0) -> DecisionPackage:
-        """Convenience method — process a raw action without a HandResult."""
-        hand = HandResult(
-            action=Action(action),
-            position=position,
-            stack_bb=stack_bb,
-            hand_number=self._hands_processed + 1,
-            villain_position=villain_position,
-        )
-        return self.process_hand(hand)
-
-    def process_sequence(self, sequence: List[int],
-                         position: Position = Position.BB) -> DecisionPackage:
+    def process_sequence(self, sequence: List[int]) -> AnalysisPackage:
         """Process an entire sequence and return the final package.
 
         Useful for batch analysis of historical data.
         """
-        pkg = DecisionPackage()
+        pkg = AnalysisPackage()
         for action in sequence:
-            pkg = self.process_action(action, position)
+            pkg = self.process_action(action)
         return pkg
 
     def predict_next(self) -> float:
-        """Return the current predicted P(next = 3bet)."""
+        """Return the current predicted P(next = 1)."""
         return self._get_blended_prediction()
 
     @property
     def detection_confidence(self) -> float:
-        """Current π_n."""
+        """Current pi_n."""
         return self._detector.posterior_h1
 
     @property
@@ -155,24 +125,22 @@ class PredictionEngine:
         return list(self._history)
 
     @property
-    def hands_processed(self) -> int:
-        return self._hands_processed
+    def observations_processed(self) -> int:
+        return self._observations_processed
 
     def reset(self) -> None:
         """Full reset of all state."""
-        self._detector.reset(gto_prob=self._current_gto_prob)
+        self._detector.reset(baseline_prob=self._current_baseline_prob)
         self._ctw.reset()
         self._bocpd.reset()
         self._history.clear()
-        self._hands_processed = 0
+        self._observations_processed = 0
 
-    # ── Private helpers ──────────────────────────────────────────────
+    # -- Private helpers -----------------------------------------------
 
     def _soft_reset(self) -> None:
         """Soft reset after changepoint: keep priors, discard accumulated data."""
-        self._detector.reset(gto_prob=self._current_gto_prob)
-        # CTW is NOT reset — it adapts on its own
-        # BOCPD is NOT reset — it continues tracking run lengths
+        self._detector.reset(baseline_prob=self._current_baseline_prob)
 
     def _get_blended_prediction(self) -> float:
         """Blend Markov(1) and CTW predictions."""
@@ -185,100 +153,48 @@ class PredictionEngine:
         else:
             return markov_pred
 
-    def _build_package(self) -> DecisionPackage:
-        """Construct the full DecisionPackage."""
+    def _build_package(self) -> AnalysisPackage:
+        """Construct the full AnalysisPackage."""
         pi_n = self._detector.posterior_h1
         q_n = self._get_blended_prediction()
-        p = self._current_gto_prob
+        p = self._current_baseline_prob
         edge = q_n - p
 
         ci = self._detector.markov.credible_interval(0.95)
 
-        # Exploitation suggestion
-        suggestion = self._exploitation_suggestion(edge, pi_n)
+        # Suggestion
+        suggestion = self._generate_suggestion(edge, pi_n)
 
-        # Hands to reliable
-        hands_to_reliable = max(0, 40 - self._hands_processed)
+        # Observations to reliable
+        obs_to_reliable = max(0, 40 - self._observations_processed)
 
-        return DecisionPackage(
+        return AnalysisPackage(
             detection_confidence=pi_n,
-            predicted_3bet_prob=q_n,
-            gto_3bet_prob=p,
+            predicted_prob=q_n,
+            baseline_prob=p,
             edge=edge,
             confidence_interval=ci,
             changepoint_flag=self._last_changepoint_flag,
-            hands_observed=self._hands_processed,
-            hands_to_reliable=hands_to_reliable,
-            exploitation_suggestion=suggestion,
+            observations=self._observations_processed,
+            observations_to_reliable=obs_to_reliable,
+            suggestion=suggestion,
         )
 
-    def _exploitation_suggestion(self, edge: float, pi_n: float) -> str:
-        """Generate human-readable exploitation recommendation."""
-        # Scale threshold by inverse confidence
+    def _generate_suggestion(self, edge: float, pi_n: float) -> str:
+        """Generate human-readable analysis recommendation."""
         if pi_n < 0.1:
-            return "Insufficient data — play GTO"
+            return "Insufficient data -- continue observing"
 
         adjusted_threshold = self.exploitation_threshold / max(pi_n, 0.1)
 
         if abs(edge) < adjusted_threshold:
-            return "No significant edge detected — continue GTO play"
+            return "No significant deviation from baseline detected"
 
         if edge > 0:
-            # Opponent 3bets more than GTO
-            suggestions = []
-            if edge > 0.08:
-                suggestions.append("STRONG: Tighten calling range significantly")
-                suggestions.append("Widen 4bet bluff range to exploit their wide 3bets")
-            elif edge > 0.04:
-                suggestions.append("Fold more marginal hands vs their 3bets")
-                suggestions.append("Consider widening 4bet range")
-            else:
-                suggestions.append("Slight tightening of call range")
-            return " | ".join(suggestions)
+            # Subject produces 1s more than baseline
+            magnitude = "strongly " if edge > 0.08 else ("" if edge > 0.04 else "slightly ")
+            return f"Subject {magnitude}favors 1 over baseline ({edge:+.1%} deviation)"
         else:
-            # Opponent 3bets less than GTO
-            suggestions = []
-            if edge < -0.08:
-                suggestions.append("STRONG: Widen flatting range aggressively")
-                suggestions.append("Reduce 4bet bluffing (they rarely 3bet)")
-            elif edge < -0.04:
-                suggestions.append("Widen flatting range — defend lighter")
-                suggestions.append("Reduce 4bet bluff frequency")
-            else:
-                suggestions.append("Slight widening of defend range")
-            return " | ".join(suggestions)
-
-    # ── Factory helpers ──────────────────────────────────────────────
-
-    @classmethod
-    def for_heads_up(cls, stack_bb: float = 100.0, **kwargs) -> PredictionEngine:
-        """Factory for Heads-Up play.
-
-        Sets the GTO baseline to ~23 % (BB 3-bet vs BTN open at 100 bb)
-        and selects the HU solver table.
-
-        Parameters
-        ----------
-        stack_bb : float
-            Effective stack depth (adjusts GTO freq via HU multipliers).
-        **kwargs
-            Any other PredictionEngine parameters to override.
-
-        Returns
-        -------
-        PredictionEngine
-            Engine pre-configured for HU play.
-        """
-        from rand_check.solver_lookup import get_gto_3bet_prob as _lookup
-        hu_gto = _lookup(
-            Position.BB, Position.BTN, stack_bb,
-            game_format=GameFormat.HEADS_UP,
-        )
-        defaults = dict(
-            default_gto_prob=hu_gto,
-            game_format=GameFormat.HEADS_UP,
-            # HU sessions are shorter — activate CTW a bit earlier
-            ctw_activation=45,
-        )
-        defaults.update(kwargs)
-        return cls(**defaults)
+            # Subject produces 0s more than baseline
+            magnitude = "strongly " if edge < -0.08 else ("" if edge < -0.04 else "slightly ")
+            return f"Subject {magnitude}favors 0 over baseline ({edge:+.1%} deviation)"

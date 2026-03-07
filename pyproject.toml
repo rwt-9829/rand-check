@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rand-check"
 version = "0.1.0"
-description = "3bet Randomness Detector & Exploitative Predictor for Poker"
+description = "Binary Sequence Randomness Analyzer — detect patterns in 0/1 streams"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
