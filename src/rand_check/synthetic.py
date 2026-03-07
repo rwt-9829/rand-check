@@ -88,7 +88,7 @@ def generate_gamblers_fallacy(
     n: int,
     p: float = 0.50,
     pressure_rate: float = 0.05,
-    max_pressure: float = 0.40,
+    max_pressure: float = 0.90,
     rng: Optional[np.random.Generator] = None,
 ) -> GeneratedSequence:
     """Gambler's fallacy model.
@@ -98,15 +98,24 @@ def generate_gamblers_fallacy(
 
     After a 1, the probability drops to model "I just did 1, I shouldn't
     do it again right away."
+
+    Notes
+    -----
+    ``max_pressure`` is treated as an upper ceiling on the *increased*
+    reversal probability. If a caller passes a value below the baseline,
+    we keep the ceiling at least as large as ``p`` so the generator still
+    expresses gambler's-fallacy-style reversal pressure rather than
+    accidentally capping it below baseline.
     """
     rng = rng or np.random.default_rng()
+    pressure_ceiling = max(max_pressure, p)
 
     seq: list[int] = []
     consecutive_zeros = 0
 
     for _ in range(n):
         if consecutive_zeros > 0:
-            prob = min(p + consecutive_zeros * pressure_rate, max_pressure)
+            prob = min(p + consecutive_zeros * pressure_rate, pressure_ceiling)
         else:
             prob = max(p * 0.6, 0.02)  # suppressed after recent 1
 

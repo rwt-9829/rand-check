@@ -35,16 +35,26 @@ class DetectionEngine:
     """
     baseline_prob: float = 0.50
     prior_h1: float = 0.5
+    markov_kappa: float = 15.0
+    markov_delta: float = 0.10
+    markov_weight: float = 0.7
+    counter_window: int = 12
+    counter_strength: float = 1.25
 
     # Internal state
     _pi: float = field(init=False)
     _markov: BayesianMarkovUpdater = field(init=False)
     _log_lr_cumulative: float = field(default=0.0, init=False)
     _n_obs: int = field(default=0, init=False)
+    _history: list[int] = field(default_factory=list, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._pi = self.prior_h1
-        self._markov = BayesianMarkovUpdater(baseline_prob=self.baseline_prob)
+        self._markov = BayesianMarkovUpdater(
+            baseline_prob=self.baseline_prob,
+            kappa=self.markov_kappa,
+            delta=self.markov_delta,
+        )
 
     @property
     def posterior_h1(self) -> float:
@@ -59,6 +69,35 @@ class DetectionEngine:
     @property
     def markov(self) -> BayesianMarkovUpdater:
         return self._markov
+
+    def patterned_predict(self) -> float:
+        """Predict P(next=1) under the broader H1 patterned model.
+
+        H1 is modeled as a lightweight mixture of two common human sequence
+        generators:
+
+        - a sequential-dependence expert (`BayesianMarkovUpdater`)
+        - a local-balance / frequency-correction expert
+
+        The second expert helps with "trying to look random" behaviour such as
+        counter-balancing and gambler's-fallacy-style reversal pressure.
+        """
+        markov_pred = self._markov.predict()
+        counter_pred = self._counter_predict()
+        w = self.markov_weight
+        return w * markov_pred + (1.0 - w) * counter_pred
+
+    def _counter_predict(self) -> float:
+        """Local-balance predictor for human frequency-correction behaviour."""
+        if len(self._history) < 4:
+            return self.baseline_prob
+
+        window = min(self.counter_window, len(self._history))
+        recent = self._history[-window:]
+        recent_freq = sum(recent) / window
+        correction = self.counter_strength * (self.baseline_prob - recent_freq)
+        pred = self.baseline_prob + correction
+        return max(0.02, min(0.98, pred))
 
     def update(self, action: int) -> float:
         """Process a new observation and return updated pi_n.
@@ -80,11 +119,16 @@ class DetectionEngine:
         else:
             log_l_h0 = math.log(max(1.0 - p, 1e-15))
 
-        # Likelihood under H1: Markov(1) predictive
-        log_l_h1 = self._markov.log_likelihood_observation(action)
+        # Likelihood under H1: broader patterned-model predictive
+        p_h1 = self.patterned_predict()
+        if action == 1:
+            log_l_h1 = math.log(max(p_h1, 1e-15))
+        else:
+            log_l_h1 = math.log(max(1.0 - p_h1, 1e-15))
 
         # Update the Markov model *after* computing its likelihood
         self._markov.update(action)
+        self._history.append(action)
         self._n_obs += 1
 
         # Accumulate log likelihood ratio
@@ -113,6 +157,7 @@ class DetectionEngine:
         self._pi = self.prior_h1
         self._log_lr_cumulative = 0.0
         self._n_obs = 0
+        self._history.clear()
         self._markov.reset(baseline_prob=self.baseline_prob)
 
     def interpret(self) -> str:

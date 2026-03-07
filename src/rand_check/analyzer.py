@@ -237,6 +237,14 @@ class PostSessionAnalyzer:
         self, features: FeatureVector, sequence: list[int], baseline_prob: float
     ) -> PatternFingerprint:
         """Identify the dominant cognitive bias from the feature vector."""
+        if len(sequence) < 10:
+            return PatternFingerprint(
+                primary_bias="none_detected",
+                confidence=0.0,
+                bias_scores={},
+                description="Sequence is too short for a reliable bias fingerprint",
+            )
+
         scores: dict[str, float] = {}
 
         # Alternation bias: high alternation deviation + negative serial correlation

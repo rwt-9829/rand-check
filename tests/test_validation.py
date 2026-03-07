@@ -1,8 +1,23 @@
 ﻿"""Tests for the validation framework."""
 
+import numpy as np
 import pytest
 
+from rand_check.synthetic import generate_iid_bernoulli, generate_markov_alternation
 from rand_check.validation import ValidationRunner, ValidationMetrics
+
+
+def _structured_validation_dataset() -> list:
+    """Controlled validation set with a clean literature-style alternation signal.
+
+    Using strong alternation against IID makes the expected power progression and
+    proper-score improvements stable enough for regression testing.
+    """
+    rng = np.random.default_rng(7)
+    return [
+        *[generate_iid_bernoulli(60, 0.50, rng) for _ in range(12)],
+        *[generate_markov_alternation(60, 0.50, 0.68, rng) for _ in range(12)],
+    ]
 
 
 class TestValidation:
@@ -48,3 +63,50 @@ class TestValidation:
         summary = metrics.summary()
         assert "Brier score" in summary
         assert "DETECTION POWER" in summary
+        assert "FNR=" in summary
+
+    def test_checkpoint_metrics_are_internally_consistent(self):
+        runner = ValidationRunner(checkpoints=[20, 40])
+        metrics = runner.run(n_per_model=5, seq_length=40, baseline_prob=0.50, seed=42)
+
+        cp20 = metrics.checkpoint_metrics[20]
+        assert cp20.true_positive + cp20.false_negative == metrics.n_human
+        assert cp20.true_negative + cp20.false_positive == metrics.n_iid
+        assert cp20.false_negative_rate == pytest.approx(1.0 - cp20.true_positive_rate)
+        assert 0.0 <= cp20.roc_auc <= 1.0
+
+    def test_per_model_metrics_cover_all_generators(self):
+        runner = ValidationRunner(checkpoints=[20])
+        metrics = runner.run(n_per_model=3, seq_length=20, baseline_prob=0.50, seed=42)
+
+        assert set(metrics.per_model_metrics) == {
+            "iid_bernoulli",
+            "markov_alternation",
+            "gamblers_fallacy",
+            "counter",
+            "run_averse",
+            "mixture",
+            "changepoint",
+        }
+        assert metrics.per_model_metrics["iid_bernoulli"].is_human is False
+        assert metrics.per_model_metrics["markov_alternation"].is_human is True
+
+    def test_validation_beats_baseline_on_structured_dataset(self):
+        runner = ValidationRunner(checkpoints=[20, 40, 60])
+        metrics = runner.run(dataset=_structured_validation_dataset())
+
+        assert metrics.log_loss < metrics.log_loss_baseline
+        assert metrics.brier_score < 0.25
+        assert "better than the naive baseline" in metrics.summary()
+
+    def test_detection_power_increases_with_more_observations(self):
+        runner = ValidationRunner(checkpoints=[20, 40, 60])
+        metrics = runner.run(dataset=_structured_validation_dataset())
+
+        assert metrics.detection_power[20] < metrics.detection_power[40] < metrics.detection_power[60]
+
+    def test_false_positive_rate_stays_low_on_controlled_iid_subset(self):
+        runner = ValidationRunner(checkpoints=[20, 40, 60])
+        metrics = runner.run(dataset=_structured_validation_dataset())
+
+        assert all(fpr <= 0.05 for fpr in metrics.false_positive_rate.values())

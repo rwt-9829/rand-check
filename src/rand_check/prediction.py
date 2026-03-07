@@ -55,6 +55,9 @@ class PredictionEngine:
     ctw_activation: int = 60
     ctw_blend_weight: float = 0.35
     exploitation_threshold: float = 0.03
+    markov_weight: float = 0.7
+    counter_window: int = 12
+    counter_strength: float = 1.25
 
     # -- Sub-engines (initialized in __post_init__) --------------------
     _detector: DetectionEngine = field(init=False, repr=False)
@@ -67,7 +70,14 @@ class PredictionEngine:
 
     def __post_init__(self) -> None:
         self._current_baseline_prob = self.default_baseline_prob
-        self._detector = DetectionEngine(baseline_prob=self._current_baseline_prob)
+        self._detector = DetectionEngine(
+            baseline_prob=self._current_baseline_prob,
+            markov_kappa=self.kappa,
+            markov_delta=self.delta,
+            markov_weight=self.markov_weight,
+            counter_window=self.counter_window,
+            counter_strength=self.counter_strength,
+        )
         self._ctw = ContextTreeWeighting(
             max_depth=self.ctw_max_depth,
             activation_threshold=self.ctw_activation,
@@ -141,17 +151,36 @@ class PredictionEngine:
     def _soft_reset(self) -> None:
         """Soft reset after changepoint: keep priors, discard accumulated data."""
         self._detector.reset(baseline_prob=self._current_baseline_prob)
+        self._ctw.reset()
 
-    def _get_blended_prediction(self) -> float:
-        """Blend Markov(1) and CTW predictions."""
-        markov_pred = self._detector.markov.predict()
+    def _get_pattern_prediction(self) -> float:
+        """Pattern-model prediction under H1.
+
+        This is the higher-capacity sequential model: a Markov(1) base rate
+        optionally blended with CTW once enough data exists.
+        """
+        base_pattern_pred = self._detector.patterned_predict()
 
         if self._ctw.is_active:
             ctw_pred = self._ctw.predict()
             w = self.ctw_blend_weight
-            return w * ctw_pred + (1.0 - w) * markov_pred
-        else:
-            return markov_pred
+            return w * ctw_pred + (1.0 - w) * base_pattern_pred
+
+        return base_pattern_pred
+
+    def _get_blended_prediction(self) -> float:
+        """Bayesian model average between H0 and H1 predictions.
+
+        The detection engine maintains ``pi_n = P(H1 | data)``. Prediction
+        should therefore average the null model (IID Bernoulli baseline) and
+        the sequential H1 model rather than always trusting the patterned model.
+        This improves calibration on genuinely random sequences while still
+        exploiting structure once the evidence for H1 grows.
+        """
+        pi_n = self._detector.posterior_h1
+        h0_pred = self._current_baseline_prob
+        h1_pred = self._get_pattern_prediction()
+        return (1.0 - pi_n) * h0_pred + pi_n * h1_pred
 
     def _build_package(self) -> AnalysisPackage:
         """Construct the full AnalysisPackage."""
