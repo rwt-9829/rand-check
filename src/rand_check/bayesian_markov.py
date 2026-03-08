@@ -68,24 +68,26 @@ class BayesianMarkovUpdater:
         bias delta:
 
         From state 0 (prev = 0):
-            alpha_{0,1} = P * kappa
-            alpha_{0,0} = (1 - P) * kappa
+            alpha_{0,1} = (P + delta) * kappa
+            alpha_{0,0} = (1 - P - delta) * kappa
 
         From state 1 (prev = 1):
             alpha_{1,0} = (1 - P + delta) * kappa  (humans more likely to switch)
             alpha_{1,1} = (P - delta) * kappa       (humans less likely to repeat)
+
+        This preserves a symmetric "switching pressure" across both previous
+        states rather than biasing only one transition row.
         """
         p = self.baseline_prob
         k = self.kappa
         d = self.delta
 
-        # Clamp (P - delta) so prior pseudo-count stays positive
-        p_minus_d = max(p - d, 0.01)
-        one_minus_p_plus_d = min(1.0 - p + d, 0.99)
+        p_switch_from_0 = min(max(p + d, 0.01), 0.99)
+        p_switch_from_1 = min(max(1.0 - p + d, 0.01), 0.99)
 
         self._alpha = [
-            [(1.0 - p) * k, p * k],            # from state 0
-            [one_minus_p_plus_d * k, p_minus_d * k],  # from state 1
+            [(1.0 - p_switch_from_0) * k, p_switch_from_0 * k],
+            [p_switch_from_1 * k, (1.0 - p_switch_from_1) * k],
         ]
 
     def reset(self, baseline_prob: Optional[float] = None) -> None:

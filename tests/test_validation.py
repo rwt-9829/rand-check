@@ -4,7 +4,12 @@ import numpy as np
 import pytest
 
 from rand_check.synthetic import generate_iid_bernoulli, generate_markov_alternation
-from rand_check.validation import ValidationRunner, ValidationMetrics
+from rand_check.validation import (
+    ValidationRunner,
+    ValidationMetrics,
+    CalibrationMetrics,
+    ChangepointPerformance,
+)
 
 
 def _structured_validation_dataset() -> list:
@@ -62,8 +67,32 @@ class TestValidation:
         metrics = runner.run(n_per_model=5, seq_length=30, baseline_prob=0.50, seed=42)
         summary = metrics.summary()
         assert "Brier score" in summary
+        assert "CALIBRATION" in summary
         assert "DETECTION POWER" in summary
+        assert "CHANGEPOINT PERFORMANCE" in summary
         assert "FNR=" in summary
+
+    def test_calibration_metrics_present_and_bounded(self):
+        runner = ValidationRunner(checkpoints=[20])
+        metrics = runner.run(n_per_model=5, seq_length=30, baseline_prob=0.50, seed=42)
+
+        assert isinstance(metrics.calibration, CalibrationMetrics)
+        assert 0.0 <= metrics.calibration.expected_calibration_error <= 1.0
+        assert 0.0 <= metrics.calibration.max_calibration_error <= 1.0
+        assert metrics.calibration.reliability >= 0.0
+        assert metrics.calibration.resolution >= 0.0
+        assert metrics.calibration.uncertainty >= 0.0
+
+    def test_changepoint_performance_present_for_full_synthetic_suite(self):
+        runner = ValidationRunner(checkpoints=[20])
+        metrics = runner.run(n_per_model=5, seq_length=80, baseline_prob=0.50, seed=42)
+
+        assert isinstance(metrics.changepoint_performance, ChangepointPerformance)
+        assert metrics.changepoint_performance.n_sequences == 5
+        assert 0.0 <= metrics.changepoint_performance.detection_rate <= 1.0
+        assert 0.0 <= metrics.changepoint_performance.localized_detection_rate <= 1.0
+        assert 0.0 <= metrics.changepoint_performance.false_alarm_rate <= 1.0
+        assert 0.0 <= metrics.changepoint_performance.mean_peak_probability <= 1.0
 
     def test_checkpoint_metrics_are_internally_consistent(self):
         runner = ValidationRunner(checkpoints=[20, 40])
@@ -98,6 +127,7 @@ class TestValidation:
         assert metrics.log_loss < metrics.log_loss_baseline
         assert metrics.brier_score < 0.25
         assert "better than the naive baseline" in metrics.summary()
+        assert metrics.changepoint_performance is None
 
     def test_detection_power_increases_with_more_observations(self):
         runner = ValidationRunner(checkpoints=[20, 40, 60])

@@ -27,14 +27,26 @@ class TestBOCPD:
 
     def test_detects_changepoint_in_shifted_data(self):
         """Sequence that changes from all-0 to all-1 should trigger detection."""
-        det = BOCPDDetector(hazard_rate=0.05, threshold=0.50)
+        det = BOCPDDetector(hazard_rate=0.05, threshold=0.08)
         # 50 zeros then 50 ones — obvious changepoint
-        detected = False
+        detected_steps = []
+        cp_probs = []
         for i in range(100):
             obs = 0 if i < 50 else 1
             if det.update(obs):
-                detected = True
-        assert detected
+                detected_steps.append(i + 1)
+            cp_probs.append(det.changepoint_probability)
+        assert detected_steps
+        assert 48 <= detected_steps[0] <= 55
+        assert max(cp_probs[45:60]) > 0.08
+
+    def test_changepoint_probability_is_data_dependent(self):
+        det = BOCPDDetector(hazard_rate=0.02)
+        probs = []
+        for obs in ([0] * 10 + [1] * 10):
+            det.update(obs)
+            probs.append(round(det.changepoint_probability, 6))
+        assert len(set(probs)) > 1
 
     def test_run_length_grows_without_changepoint(self):
         """For stationary data, run length should grow."""

@@ -41,7 +41,7 @@ class BOCPDDetector:
     hazard_rate : float
         Constant hazard rate = 1 / expected_run_length.
     threshold : float
-        If P(run_length = 0) exceeds this, flag a changepoint.
+        If P(run_length = 0 | data) exceeds this, flag a changepoint.
     prior_a : float
         Beta prior α for the within-run Bernoulli model.
     prior_b : float
@@ -51,7 +51,7 @@ class BOCPDDetector:
         memory; older runs are absorbed into the tail.
     """
     hazard_rate: float = 0.02   # 1/50
-    threshold: float = 0.50
+    threshold: float = 0.10
     prior_a: float = 1.0
     prior_b: float = 1.0
     max_run_length: int = 300
@@ -62,7 +62,6 @@ class BOCPDDetector:
     _alphas: np.ndarray = field(init=False, repr=False)  # per-run α accumulators
     _betas: np.ndarray = field(init=False, repr=False)   # per-run β accumulators
     _t: int = field(default=0, init=False)
-    _prev_map_rl: int = field(default=0, init=False)     # previous MAP run length
     _changepoint_log: list[int] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
@@ -112,7 +111,6 @@ class BOCPDDetector:
             True if a changepoint was detected at this step.
         """
         self._t += 1
-        x = float(observation)
         H = self.hazard_rate
 
         # ── Step 1: Predictive probabilities for each run length ─────
@@ -124,12 +122,16 @@ class BOCPDDetector:
             pi_arr = 1.0 - pred_probs
 
         # ── Step 2: Growth probabilities ─────────────────────────────
-        # Grow each run by 1 (multiply by (1-H) and likelihood)
+        # Grow each run by 1 (multiply by (1-H) and run-conditioned likelihood)
         growth = self._joint * pi_arr * (1.0 - H)
 
         # ── Step 3: Changepoint probability ──────────────────────────
-        # Sum the mass that goes to run_length = 0 (new run)
-        changepoint_mass = float(np.sum(self._joint * pi_arr * H))
+        # Sum the mass that goes to run_length = 0 (new run). In standard
+        # Adams–MacKay BOCPD this branch uses the segment prior predictive,
+        # not the run-conditioned predictive used for growth.
+        prior_pred = self.prior_a / (self.prior_a + self.prior_b)
+        cp_predictive = prior_pred if observation == 1 else (1.0 - prior_pred)
+        changepoint_mass = float(np.sum(self._joint * H) * cp_predictive)
 
         # ── Step 4: Shift the distribution ───────────────────────────
         new_joint = np.zeros_like(self._joint)
@@ -140,9 +142,10 @@ class BOCPDDetector:
         new_alphas = np.zeros_like(self._alphas)
         new_betas = np.zeros_like(self._betas)
 
-        # New run starts with priors
-        new_alphas[0] = self.prior_a
-        new_betas[0] = self.prior_b
+        # New run starts at r_t = 0 *after observing x_t*, so its sufficient
+        # statistics must already include the current observation.
+        new_alphas[0] = self.prior_a + (1.0 if observation == 1 else 0.0)
+        new_betas[0] = self.prior_b + (1.0 if observation == 0 else 0.0)
 
         # Existing runs: accumulate counts
         if observation == 1:
@@ -162,16 +165,7 @@ class BOCPDDetector:
             self._joint /= total
 
         # ── Step 5: Check changepoint ────────────────────────────────
-        # With constant hazard, P(r=0) ≡ H always after normalization,
-        # so we use the MAP run-length drop as the detection criterion.
-        # A sharp drop in MAP run length indicates a changepoint.
-        new_map_rl = self.most_likely_run_length
-        detected = False
-        if self._t > 5 and self._prev_map_rl > 10:
-            # MAP run length dropped significantly — likely changepoint
-            drop_ratio = 1.0 - (new_map_rl / max(self._prev_map_rl, 1))
-            detected = drop_ratio > self.threshold
-        self._prev_map_rl = new_map_rl
+        detected = self._t > 2 and self.changepoint_probability >= self.threshold
 
         if detected:
             self._changepoint_log.append(self._t)
@@ -185,5 +179,4 @@ class BOCPDDetector:
         self._alphas = np.full(self.max_run_length + 1, self.prior_a)
         self._betas = np.full(self.max_run_length + 1, self.prior_b)
         self._t = 0
-        self._prev_map_rl = 0
         self._changepoint_log.clear()

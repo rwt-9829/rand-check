@@ -91,3 +91,13 @@ class TestPredictionEngine:
         for _ in range(10):
             engine.process_action(0)
         assert engine._ctw.is_active
+
+    def test_changepoint_flag_surfaces_on_obvious_regime_shift(self):
+        engine = PredictionEngine(hazard_rate=0.05)
+        flagged_steps = []
+        for i in range(100):
+            pkg = engine.process_action(0 if i < 50 else 1)
+            if pkg.changepoint_flag:
+                flagged_steps.append(i + 1)
+        assert flagged_steps
+        assert 48 <= flagged_steps[0] <= 55

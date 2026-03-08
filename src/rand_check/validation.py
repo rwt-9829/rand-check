@@ -60,6 +60,73 @@ def _roc_auc(scores: list[float], labels: list[int]) -> float:
     return float(u_stat / (positives * negatives))
 
 
+def _expected_calibration_error(
+    predictions: list[float],
+    outcomes: list[int],
+    n_bins: int = 10,
+) -> tuple[float, float]:
+    """Return (ECE, MCE) for binary probabilistic predictions."""
+    if not predictions or not outcomes or len(predictions) != len(outcomes):
+        return 0.0, 0.0
+
+    ece = 0.0
+    mce = 0.0
+    total = len(predictions)
+
+    for bin_idx in range(n_bins):
+        lo = bin_idx / n_bins
+        hi = (bin_idx + 1) / n_bins
+        if bin_idx == n_bins - 1:
+            members = [i for i, pred in enumerate(predictions) if lo <= pred <= hi]
+        else:
+            members = [i for i, pred in enumerate(predictions) if lo <= pred < hi]
+        if not members:
+            continue
+
+        mean_pred = float(np.mean([predictions[i] for i in members]))
+        mean_obs = float(np.mean([outcomes[i] for i in members]))
+        gap = abs(mean_pred - mean_obs)
+        weight = len(members) / total
+        ece += weight * gap
+        mce = max(mce, gap)
+
+    return ece, mce
+
+
+def _brier_decomposition(
+    predictions: list[float],
+    outcomes: list[int],
+    n_bins: int = 10,
+) -> tuple[float, float, float]:
+    """Return Murphy decomposition: (reliability, resolution, uncertainty)."""
+    if not predictions or not outcomes or len(predictions) != len(outcomes):
+        return 0.0, 0.0, 0.0
+
+    overall_rate = float(np.mean(outcomes))
+    uncertainty = overall_rate * (1.0 - overall_rate)
+    reliability = 0.0
+    resolution = 0.0
+    total = len(predictions)
+
+    for bin_idx in range(n_bins):
+        lo = bin_idx / n_bins
+        hi = (bin_idx + 1) / n_bins
+        if bin_idx == n_bins - 1:
+            members = [i for i, pred in enumerate(predictions) if lo <= pred <= hi]
+        else:
+            members = [i for i, pred in enumerate(predictions) if lo <= pred < hi]
+        if not members:
+            continue
+
+        weight = len(members) / total
+        mean_pred = float(np.mean([predictions[i] for i in members]))
+        mean_obs = float(np.mean([outcomes[i] for i in members]))
+        reliability += weight * (mean_pred - mean_obs) ** 2
+        resolution += weight * (mean_obs - overall_rate) ** 2
+
+    return reliability, resolution, uncertainty
+
+
 @dataclass(frozen=True)
 class CheckpointMetrics:
     """Classification metrics at a specific observation checkpoint."""
@@ -95,6 +162,28 @@ class ModelPerformance:
 
 
 @dataclass(frozen=True)
+class CalibrationMetrics:
+    """Calibration diagnostics for next-step probabilistic predictions."""
+    expected_calibration_error: float
+    max_calibration_error: float
+    reliability: float
+    resolution: float
+    uncertainty: float
+
+
+@dataclass(frozen=True)
+class ChangepointPerformance:
+    """Localization and delay metrics on synthetic changepoint sequences."""
+    n_sequences: int
+    detection_rate: float
+    localized_detection_rate: float
+    false_alarm_rate: float
+    mean_detection_delay: float
+    mean_absolute_error: float
+    mean_peak_probability: float
+
+
+@dataclass(frozen=True)
 class ValidationMetrics:
     """Results from a validation run."""
     brier_score: float
@@ -107,6 +196,8 @@ class ValidationMetrics:
     n_iid: int
     checkpoint_metrics: dict[int, CheckpointMetrics] = field(default_factory=dict)
     per_model_metrics: dict[str, ModelPerformance] = field(default_factory=dict)
+    calibration: CalibrationMetrics | None = None
+    changepoint_performance: ChangepointPerformance | None = None
 
     def summary(self) -> str:
         lines = []
@@ -131,6 +222,18 @@ class ValidationMetrics:
             lines.append(f"    --> Model is {pct:.1f}% better than the naive baseline")
         else:
             lines.append(f"    --> Model is {abs(pct):.1f}% worse than baseline (needs tuning)")
+
+        if self.calibration is not None:
+            cal = self.calibration
+            lines.append("")
+            lines.append("  CALIBRATION")
+            lines.append("  " + "-" * 40)
+            lines.append(f"    ECE:                 {cal.expected_calibration_error:.4f}")
+            lines.append(f"    Max calibration err: {cal.max_calibration_error:.4f}")
+            lines.append(
+                f"    Brier decomposition: reliability={cal.reliability:.4f}  "
+                f"resolution={cal.resolution:.4f}  uncertainty={cal.uncertainty:.4f}"
+            )
 
         # Detection power
         lines.append("")
@@ -192,6 +295,19 @@ class ValidationMetrics:
                     f"final_{rate_label}={model.final_positive_rate * 100:.1f}%"
                 )
 
+        if self.changepoint_performance is not None:
+            cp = self.changepoint_performance
+            lines.append("")
+            lines.append("  CHANGEPOINT PERFORMANCE")
+            lines.append("  " + "-" * 40)
+            lines.append(f"    Sequences:           {cp.n_sequences}")
+            lines.append(f"    Detection rate:      {cp.detection_rate * 100:.1f}%")
+            lines.append(f"    Localized (±5):      {cp.localized_detection_rate * 100:.1f}%")
+            lines.append(f"    False-alarm rate:    {cp.false_alarm_rate * 100:.1f}%")
+            lines.append(f"    Mean delay:          {cp.mean_detection_delay:.2f}")
+            lines.append(f"    Mean abs. error:     {cp.mean_absolute_error:.2f}")
+            lines.append(f"    Mean peak cp-prob:   {cp.mean_peak_probability:.3f}")
+
         return "\n".join(lines)
 
 
@@ -233,7 +349,18 @@ class ValidationRunner:
         brier_scores: list[float] = []
         log_losses: list[float] = []
         log_losses_baseline: list[float] = []
+        all_predictions: list[float] = []
+        all_outcomes: list[int] = []
         per_model_stats: dict[str, dict[str, list[float] | bool | int]] = {}
+        changepoint_stats = {
+            "n_sequences": 0,
+            "detected": 0,
+            "localized": 0,
+            "false_alarms": 0,
+            "delays": [],
+            "absolute_errors": [],
+            "peak_probs": [],
+        }
 
         # Detection at checkpoints
         checkpoint_results: dict[int, list[tuple[float, bool]]] = {
@@ -247,6 +374,7 @@ class ValidationRunner:
             model_name = gen_seq.model_name
 
             engine = PredictionEngine(default_baseline_prob=p)
+            cp_prob_timeline: list[float] = []
 
             if model_name not in per_model_stats:
                 per_model_stats[model_name] = {
@@ -269,6 +397,8 @@ class ValidationRunner:
                 # Brier score: (pred - actual)^2
                 brier = (pred - action) ** 2
                 brier_scores.append(brier)
+                all_predictions.append(pred)
+                all_outcomes.append(int(action))
                 model_bucket["brier_scores"].append(brier)  # type: ignore[index]
 
                 # Log-loss
@@ -289,6 +419,7 @@ class ValidationRunner:
 
                 # Process the observation
                 pkg = engine.process_action(action)
+                cp_prob_timeline.append(engine._bocpd.changepoint_probability)
 
                 # Record detection at checkpoints
                 if hand_num in checkpoint_results:
@@ -296,12 +427,35 @@ class ValidationRunner:
                         (pkg.detection_confidence, is_human)
                     )
 
+            if model_name == "changepoint":
+                true_cp = int(gen_seq.parameters.get("changepoint_at", len(seq) // 2))
+                detections = engine._bocpd.changepoints_detected
+
+                changepoint_stats["n_sequences"] += 1
+                changepoint_stats["peak_probs"].append(
+                    max(cp_prob_timeline[max(0, true_cp - 6): min(len(cp_prob_timeline), true_cp + 5)], default=0.0)
+                )  # type: ignore[index]
+                if any(d < true_cp for d in detections):
+                    changepoint_stats["false_alarms"] += 1
+
+                post_change = [d for d in detections if d >= true_cp]
+                if post_change:
+                    first = post_change[0]
+                    delay = first - true_cp
+                    changepoint_stats["detected"] += 1
+                    changepoint_stats["delays"].append(delay)  # type: ignore[index]
+                    changepoint_stats["absolute_errors"].append(abs(delay))  # type: ignore[index]
+                    if abs(delay) <= 5:
+                        changepoint_stats["localized"] += 1
+
             model_bucket["final_confidences"].append(engine.detection_confidence)  # type: ignore[index]
 
         # Compute aggregate metrics
         brier = float(np.mean(brier_scores))
         ll = float(np.mean(log_losses))
         ll_base = float(np.mean(log_losses_baseline))
+        ece, mce = _expected_calibration_error(all_predictions, all_outcomes)
+        reliability, resolution, uncertainty = _brier_decomposition(all_predictions, all_outcomes)
 
         detection_power: dict[int, float] = {}
         false_positive_rate: dict[int, float] = {}
@@ -378,6 +532,30 @@ class ValidationRunner:
         n_human = sum(1 for s in dataset if s.is_human)
         n_iid = sum(1 for s in dataset if not s.is_human)
 
+        calibration = CalibrationMetrics(
+            expected_calibration_error=ece,
+            max_calibration_error=mce,
+            reliability=reliability,
+            resolution=resolution,
+            uncertainty=uncertainty,
+        )
+
+        n_cp = int(changepoint_stats["n_sequences"])
+        changepoint_performance = None
+        if n_cp > 0:
+            delays = changepoint_stats["delays"]  # type: ignore[assignment]
+            absolute_errors = changepoint_stats["absolute_errors"]  # type: ignore[assignment]
+            peak_probs = changepoint_stats["peak_probs"]  # type: ignore[assignment]
+            changepoint_performance = ChangepointPerformance(
+                n_sequences=n_cp,
+                detection_rate=float(changepoint_stats["detected"]) / n_cp,
+                localized_detection_rate=float(changepoint_stats["localized"]) / n_cp,
+                false_alarm_rate=float(changepoint_stats["false_alarms"]) / n_cp,
+                mean_detection_delay=float(np.mean(delays)) if delays else 0.0,
+                mean_absolute_error=float(np.mean(absolute_errors)) if absolute_errors else 0.0,
+                mean_peak_probability=float(np.mean(peak_probs)) if peak_probs else 0.0,
+            )
+
         return ValidationMetrics(
             brier_score=brier,
             log_loss=ll,
@@ -389,4 +567,6 @@ class ValidationRunner:
             n_iid=n_iid,
             checkpoint_metrics=checkpoint_metrics,
             per_model_metrics=per_model_metrics,
+            calibration=calibration,
+            changepoint_performance=changepoint_performance,
         )

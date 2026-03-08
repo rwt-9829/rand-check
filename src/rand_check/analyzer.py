@@ -252,7 +252,7 @@ class PostSessionAnalyzer:
         neg_corr_signal = max(0.0, -features.serial_correlation / 0.30)
         scores["alternation_bias"] = min(1.0, (alt_signal + neg_corr_signal) / 2.0)
 
-        # Gambler's fallacy: P(1) increases after long runs of 0s
+        # Gambler's fallacy: reversal pressure increases after longer streaks
         gf_signal = self._gambler_fallacy_score(sequence, baseline_prob)
         scores["gamblers_fallacy"] = gf_signal
 
@@ -297,7 +297,7 @@ class PostSessionAnalyzer:
 
         descriptions = {
             "alternation_bias": "Subject over-alternates between 0 and 1 -- a well-documented cognitive randomization artifact",
-            "gamblers_fallacy": "Subject trends toward 1 after extended runs of 0 -- gambler's fallacy",
+            "gamblers_fallacy": "Subject shows increasing reversal pressure after longer streaks -- gambler's fallacy / local representativeness",
             "run_aversion": "Subject avoids consecutive identical values -- truncated run lengths",
             "frequency_tracking": "Subject tracks cumulative frequency and self-corrects toward a target rate",
             "compressible_pattern": "Sequence is highly structured -- low Lempel-Ziv complexity indicates a repeating pattern",
@@ -314,44 +314,47 @@ class PostSessionAnalyzer:
     def _gambler_fallacy_score(sequence: list[int], baseline_prob: float) -> float:
         """Score indicating gambler's fallacy behaviour.
 
-        Check if P(1 | k consecutive 0s) increases with k.
+        Check whether reversal probability increases with streak length for
+        either symbol. This captures symmetric "reversal pressure" rather than
+        only the special case of zeros followed by ones.
         """
         if len(sequence) < 10:
             return 0.0
 
-        streak_probs: dict[int, list[int]] = {}
-        zero_streak = 0
-        for action in sequence:
-            if action == 1:
-                bucket = min(zero_streak, 5)
-                if bucket not in streak_probs:
-                    streak_probs[bucket] = []
-                streak_probs[bucket].append(1)
-                zero_streak = 0
+        streak_reversal: dict[int, dict[int, list[int]]] = {0: {}, 1: {}}
+
+        current_value = sequence[0]
+        streak_len = 1
+        for action in sequence[1:]:
+            bucket = min(streak_len, 5)
+            reversed_now = 1 if action != current_value else 0
+            streak_reversal[current_value].setdefault(bucket, []).append(reversed_now)
+
+            if action == current_value:
+                streak_len += 1
             else:
-                bucket = min(zero_streak, 5)
-                if bucket not in streak_probs:
-                    streak_probs[bucket] = []
-                streak_probs[bucket].append(0)
-                zero_streak += 1
+                current_value = action
+                streak_len = 1
 
-        if len(streak_probs) < 2:
+        signal_strengths: list[float] = []
+        for streak_value in (0, 1):
+            rates = []
+            for k in sorted(streak_reversal[streak_value].keys()):
+                obs = streak_reversal[streak_value][k]
+                if len(obs) >= 5:
+                    rates.append((k, sum(obs) / len(obs)))
+
+            if len(rates) < 2:
+                continue
+
+            low_rate = rates[0][1]
+            high_rate = rates[-1][1]
+            if high_rate > low_rate + 0.05:
+                signal_strengths.append(min(1.0, (high_rate - low_rate) / 0.30))
+
+        if not signal_strengths:
             return 0.0
-
-        rates = []
-        for k in sorted(streak_probs.keys()):
-            obs = streak_probs[k]
-            if len(obs) >= 3:
-                rates.append((k, sum(obs) / len(obs)))
-
-        if len(rates) < 2:
-            return 0.0
-
-        low_rate = rates[0][1]
-        high_rate = rates[-1][1]
-        if high_rate > low_rate + 0.05:
-            return min(1.0, (high_rate - low_rate) / 0.30)
-        return 0.0
+        return float(sum(signal_strengths) / len(signal_strengths))
 
     @staticmethod
     def _get_runs(seq: list[int]) -> list[tuple[int, int]]:

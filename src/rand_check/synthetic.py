@@ -91,13 +91,16 @@ def generate_gamblers_fallacy(
     max_pressure: float = 0.90,
     rng: Optional[np.random.Generator] = None,
 ) -> GeneratedSequence:
-    """Gambler's fallacy model.
+    """Symmetric gambler's-fallacy / reversal-pressure model.
 
-    After k consecutive 0s, the probability of producing a 1 increases:
+    After a streak of identical values, the subject increasingly expects and
+    produces the opposite value. For example, after k consecutive 0s:
+
         P(1 | last k = 0) = min(p + k * pressure_rate, max_pressure)
 
-    After a 1, the probability drops to model "I just did 1, I shouldn't
-    do it again right away."
+    and after k consecutive 1s:
+
+        P(1 | last k = 1) = max(p - k * pressure_rate, 1 - max_pressure)
 
     Notes
     -----
@@ -111,21 +114,28 @@ def generate_gamblers_fallacy(
     pressure_ceiling = max(max_pressure, p)
 
     seq: list[int] = []
-    consecutive_zeros = 0
+    if n > 0:
+        first = 1 if rng.random() < p else 0
+        seq.append(first)
 
-    for _ in range(n):
-        if consecutive_zeros > 0:
-            prob = min(p + consecutive_zeros * pressure_rate, pressure_ceiling)
+    streak_value = seq[0] if seq else 0
+    streak_len = 1 if seq else 0
+    lower_ceiling = 1.0 - pressure_ceiling
+
+    for _ in range(1, n):
+        if streak_value == 0:
+            prob = min(p + streak_len * pressure_rate, pressure_ceiling)
         else:
-            prob = max(p * 0.6, 0.02)  # suppressed after recent 1
+            prob = max(p - streak_len * pressure_rate, lower_ceiling)
 
         action = 1 if rng.random() < prob else 0
         seq.append(action)
 
-        if action == 0:
-            consecutive_zeros += 1
+        if action == streak_value:
+            streak_len += 1
         else:
-            consecutive_zeros = 0
+            streak_value = action
+            streak_len = 1
 
     return GeneratedSequence(
         sequence=seq,
@@ -247,8 +257,8 @@ def generate_changepoint(
     n: int,
     p: float = 0.50,
     changepoint_at: Optional[int] = None,
-    pre_alternation: float = 0.60,
-    post_alternation: float = 0.40,
+    pre_alternation: float = 0.68,
+    post_alternation: float = 0.32,
     rng: Optional[np.random.Generator] = None,
 ) -> GeneratedSequence:
     """Sequence with a mid-session behaviour change (changepoint).

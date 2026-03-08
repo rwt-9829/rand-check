@@ -105,3 +105,8 @@ class TestBayesianMarkovUpdater:
         pred_low = updater_low.predict(given_last=0)
         pred_high = updater_high.predict(given_last=0)
         assert abs(pred_high - 0.30) < abs(pred_low - 0.30)
+
+    def test_alternation_prior_is_symmetric_at_half_baseline(self):
+        updater = BayesianMarkovUpdater(baseline_prob=0.50, kappa=15.0, delta=0.10)
+        assert updater._alpha[0][1] == pytest.approx(updater._alpha[1][0])
+        assert updater._alpha[0][0] == pytest.approx(updater._alpha[1][1])

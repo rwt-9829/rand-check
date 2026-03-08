@@ -194,10 +194,11 @@ class ContextTreeWeighting:
                 child = node.children[ctx_sym]
                 child_log_pw = self._simulate_update(child, context, depth + 1, symbol)
             else:
-                # New child would get its first symbol
+                # New child would still inherit the remaining context depth.
+                # Recurse through an empty subtree rather than truncating the
+                # active path early.
                 child = _CTWNode()
-                _, _, child_log_kt = _kt_update(0.0, 0.0, symbol)
-                child_log_pw = child_log_kt  # leaf: log_pw = log_pe
+                child_log_pw = self._simulate_update(child, context, depth + 1, symbol)
 
             # Sum log_pw of all children (only the target child changes)
             log_children_pw = child_log_pw

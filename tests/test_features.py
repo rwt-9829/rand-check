@@ -69,8 +69,10 @@ class TestFeatures:
         long_runs = [0] * 10 + [1] * 10 + [0] * 10 + [1] * 10
         fv_short = compute_features(short_runs, baseline_prob=0.50)
         fv_long = compute_features(long_runs, baseline_prob=0.50)
-        # Short runs -> higher score (more surprising under IID)
-        assert fv_short.run_length_score < fv_long.run_length_score
+        # Short runs -> more runs than expected; long runs -> fewer.
+        assert fv_short.run_length_score > fv_long.run_length_score
+        assert fv_short.run_length_score > 0
+        assert fv_long.run_length_score < 0
 
     def test_llr_positive_for_markov_data(self):
         """Markov data should have positive LLR (Markov fits better than IID)."""

@@ -4,7 +4,7 @@ Computes the six diagnostic features from the full binary sequence:
 
   1. Log Likelihood Ratio (LLR)  — Markov(1) MLE vs IID Bernoulli(P)
   2. Alternation Rate Deviation  — ΔA = A − 2P(1−P)
-  3. Run Length Score             — −Σ log P(run ≥ k | Bernoulli)
+    3. Run Length Score             — excess-runs z-score vs IID Bernoulli
   4. Normalized LZ Complexity     — LZC / LZC_expected
   5. Frequency Drift              -- variance of windowed frequency of 1s
   6. Lag-1 Serial Correlation     -- Corr(x_i, x_{i-1})
@@ -91,9 +91,13 @@ class FeatureVector:
             findings.append(f"  Serial dep.:    No significant serial dependence detected")
 
         # Run length
-        if self.run_length_score > 5.0:
+        if self.run_length_score > 1.5:
             findings.append(
                 f"  Run lengths:    Shorter than expected under randomness"
+            )
+        elif self.run_length_score < -1.5:
+            findings.append(
+                f"  Run lengths:    Longer than expected under randomness"
             )
         else:
             findings.append(f"  Run lengths:    Consistent with randomness")
@@ -150,8 +154,10 @@ class FeatureVector:
 
         # Run length
         lines.append(f"    RLS = {self.run_length_score:.2f}")
-        if self.run_length_score > 5.0:
-            lines[-1] += "  <- Runs shorter than expected (human)"
+        if self.run_length_score > 1.5:
+            lines[-1] += "  <- Too many runs / shortened runs"
+        elif self.run_length_score < -1.5:
+            lines[-1] += "  <- Too few runs / overly long streaks"
 
         # LZ complexity
         if self.normalized_lz_complexity < 0.85:
@@ -274,24 +280,28 @@ def _alternation_deviation(seq: list[int], p: float) -> float:
 # ═══════════════════════════════════════════════════════════════════════
 
 def _run_length_score(seq: list[int], p: float) -> float:
-    """Score = −Σ log P(run ≥ k | IID Bernoulli(P)).
+    """Excess-runs z-score relative to IID Bernoulli counts.
 
-    Higher score: runs are shorter than expected, indicating human generation.
+    Positive values indicate *more* runs than expected, i.e. shorter runs and
+    stronger alternation / run aversion. Negative values indicate longer-than-
+    expected streaks.
     """
-    if len(seq) < 2:
+    n = len(seq)
+    if n < 2:
         return 0.0
 
-    runs = _extract_runs(seq)
-    score = 0.0
-    for value, length in runs:
-        # P(run of value ≥ k) = q^k where q = p if value=1, (1-p) otherwise
-        q = p if value == 1 else (1.0 - p)
-        if q <= 0 or q >= 1:
-            continue
-        # −log P(run ≥ length) = −length · log(q)
-        score -= length * math.log(q)
+    n1 = sum(seq)
+    n0 = n - n1
+    if n0 == 0 or n1 == 0 or n < 3:
+        return 0.0
 
-    return score
+    observed_runs = len(_extract_runs(seq))
+    expected_runs = 1.0 + (2.0 * n0 * n1) / n
+    variance = (2.0 * n0 * n1 * (2.0 * n0 * n1 - n)) / (n * n * (n - 1))
+    if variance <= 1e-12:
+        return 0.0
+
+    return float((observed_runs - expected_runs) / math.sqrt(variance))
 
 
 def _extract_runs(seq: list[int]) -> list[tuple[int, int]]:

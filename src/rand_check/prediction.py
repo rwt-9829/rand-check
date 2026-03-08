@@ -95,9 +95,14 @@ class PredictionEngine:
             0 or 1.
         """
         # Update all sub-engines
-        pi_n = self._detector.update(action)
+        transition_signal = 0 if not self._history else int(action != self._history[-1])
+
+        self._detector.update(action)
         self._ctw.update(action)
-        changepoint = self._bocpd.update(action)
+        # Changepoints in this application are often changes in *sequential
+        # structure* rather than marginal P(1), so the BOCPD layer monitors the
+        # transition stream (switch vs repeat) instead of the raw action stream.
+        changepoint = self._bocpd.update(transition_signal)
 
         self._history.append(action)
         self._observations_processed += 1
@@ -106,6 +111,11 @@ class PredictionEngine:
         if changepoint:
             self._last_changepoint_flag = True
             self._soft_reset()
+            # Seed the new regime with the current observation so the detected
+            # changepoint does not discard the boundary sample from the active
+            # segment models.
+            self._detector.update(action)
+            self._ctw.update(action)
         else:
             self._last_changepoint_flag = False
 
