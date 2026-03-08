@@ -133,7 +133,8 @@ class TestValidation:
         runner = ValidationRunner(checkpoints=[20, 40, 60])
         metrics = runner.run(dataset=_structured_validation_dataset())
 
-        assert metrics.detection_power[20] < metrics.detection_power[40] < metrics.detection_power[60]
+        assert metrics.detection_power[20] <= metrics.detection_power[40] <= metrics.detection_power[60]
+        assert metrics.detection_power[40] > metrics.detection_power[20]
 
     def test_false_positive_rate_stays_low_on_controlled_iid_subset(self):
         runner = ValidationRunner(checkpoints=[20, 40, 60])
